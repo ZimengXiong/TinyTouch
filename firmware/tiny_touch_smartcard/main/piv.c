@@ -45,9 +45,9 @@ static const uint8_t CHUID_OBJECT[] = {
 };
 static const uint8_t KEY_HISTORY_OBJECT[] = {
   0x53, 0x09,
-  0xc1, 0x01, 0x00, // retired key management certs present on card
-  0xc2, 0x01, 0x00, // retired key management certs off card
-  0xc3, 0x01, 0x00  // off-card cert URL not present
+  0xc1, 0x01, 0x00,
+  0xc2, 0x01, 0x00,
+  0xc3, 0x01, 0x00
 };
 
 static mbedtls_pk_context auth_key;
@@ -266,27 +266,23 @@ static bool handle_get_data(const uint8_t *apdu, size_t apdu_len, uint8_t *respo
   size_t data_len = 0;
   if (!read_lc_data(apdu, apdu_len, &data, &data_len)) return append_sw(response, response_len, response_cap, 0x6700);
 
-  // PIV discovery object tag: 0x7e.
   if (data_len == 3 && data[0] == 0x5c && data[1] == 0x01 && data[2] == 0x7e) {
     return respond_maybe_chunked(DISCOVERY_OBJECT, sizeof(DISCOVERY_OBJECT), apdu, apdu_len,
                                  response, response_len, response_cap);
   }
 
-  // Card Capability Container object tag: 0x5fc107.
   if (data_len == 5 && data[0] == 0x5c && data[1] == 0x03 &&
       data[2] == 0x5f && data[3] == 0xc1 && data[4] == 0x07) {
     return respond_maybe_chunked(CCC_OBJECT, sizeof(CCC_OBJECT), apdu, apdu_len,
                                  response, response_len, response_cap);
   }
 
-  // CHUID object tag: 0x5fc102.
   if (data_len == 5 && data[0] == 0x5c && data[1] == 0x03 &&
       data[2] == 0x5f && data[3] == 0xc1 && data[4] == 0x02) {
     return respond_maybe_chunked(CHUID_OBJECT, sizeof(CHUID_OBJECT), apdu, apdu_len,
                                  response, response_len, response_cap);
   }
 
-  // PIV authentication certificate object: 0x5fc105.
   if (data_len == 5 && data[0] == 0x5c && data[1] == 0x03 &&
       data[2] == 0x5f && data[3] == 0xc1 && data[4] == 0x05) {
     if (cert_9a_der_len == 0) return append_sw(response, response_len, response_cap, 0x6a88);
@@ -307,7 +303,6 @@ static bool handle_get_data(const uint8_t *apdu, size_t apdu_len, uint8_t *respo
     return respond_maybe_chunked(object, off, apdu, apdu_len, response, response_len, response_cap);
   }
 
-  // Key management certificate object: 0x5fc10b.
   if (data_len == 5 && data[0] == 0x5c && data[1] == 0x03 &&
       data[2] == 0x5f && data[3] == 0xc1 && data[4] == 0x0b) {
     if (cert_9d_der_len == 0) return append_sw(response, response_len, response_cap, 0x6a88);
@@ -328,7 +323,6 @@ static bool handle_get_data(const uint8_t *apdu, size_t apdu_len, uint8_t *respo
     return respond_maybe_chunked(object, off, apdu, apdu_len, response, response_len, response_cap);
   }
 
-  // Key History object tag: 0x5fc10c.
   if (data_len == 5 && data[0] == 0x5c && data[1] == 0x03 &&
       data[2] == 0x5f && data[3] == 0xc1 && data[4] == 0x0c) {
     return respond_maybe_chunked(KEY_HISTORY_OBJECT, sizeof(KEY_HISTORY_OBJECT), apdu, apdu_len,
@@ -360,7 +354,6 @@ void piv_note_user_presence(void) {
 static bool handle_general_authenticate(const uint8_t *apdu, size_t apdu_len,
                                         uint8_t *response, size_t *response_len,
                                         size_t response_cap) {
-  // RSA 2048 PIV authentication and key-management key references: 9A, 9D.
   if (apdu[2] != 0x07 || !(apdu[3] == 0x9a || apdu[3] == 0x9d)) {
     return append_sw(response, response_len, response_cap, 0x6a86);
   }

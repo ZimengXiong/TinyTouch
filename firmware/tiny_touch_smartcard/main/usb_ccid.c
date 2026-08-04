@@ -48,8 +48,6 @@ static bool send_ccid(uint8_t msg_type, uint8_t slot, uint8_t seq, uint8_t statu
 }
 
 static bool send_parameters(uint8_t slot, uint8_t seq) {
-  // CCID T=1 protocol data structure:
-  // bmFindexDindex, bmTCCKST1, bGuardTimeT1, bmWaitingIntegersT1, bClockStop, bIFSC, bNadValue.
   const uint8_t t1_params[] = {0x11, 0x10, 0x00, 0x45, 0x00, 0xfe, 0x00};
   return send_ccid(0x82, slot, seq, 0x00, 0x00, t1_params, sizeof(t1_params));
 }
@@ -67,21 +65,21 @@ static void handle_message(uint8_t *msg, size_t msg_len) {
   }
 
   switch (type) {
-    case 0x62: { // PC_to_RDR_IccPowerOn
+    case 0x62: {
       const uint8_t atr[] = {0x3b, 0x80, 0x01, 0x01};
       send_ccid(0x80, slot, seq, 0x00, 0x00, atr, sizeof(atr));
       break;
     }
-    case 0x63: // PC_to_RDR_IccPowerOff
-    case 0x65: // PC_to_RDR_GetSlotStatus
+    case 0x63:
+    case 0x65:
       send_ccid(0x81, slot, seq, 0x00, 0x00, NULL, 0);
       break;
-    case 0x61: // PC_to_RDR_SetParameters
-    case 0x6c: // PC_to_RDR_GetParameters
-    case 0x6d: // PC_to_RDR_ResetParameters
+    case 0x61:
+    case 0x6c:
+    case 0x6d:
       send_parameters(slot, seq);
       break;
-    case 0x6f: { // PC_to_RDR_XfrBlock
+    case 0x6f: {
       size_t resp_len = sizeof(tx_buf) - 10;
       bool ok = apdu_handler &&
                 apdu_handler(msg + 10, len, tx_buf + 10, &resp_len, sizeof(tx_buf) - 10);

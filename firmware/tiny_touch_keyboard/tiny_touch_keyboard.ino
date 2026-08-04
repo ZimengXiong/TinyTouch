@@ -27,7 +27,6 @@ static const bool DEBUG_FP_PACKETS = false;
 static const uint8_t FP_LED_GREEN = 0x02;
 static const uint8_t FP_LED_WHITE = 0x07;
 static const uint8_t FP_LED_RED = 0x04;
-// This unit showed visible purple at 0x03 in previous ESP testing.
 static const uint8_t FP_LED_PURPLE = 0x03;
 static const uint8_t FP_LED_FUNC_STEADY = 3;
 
@@ -35,7 +34,7 @@ USBHIDKeyboard Keyboard;
 HardwareSerial Finger(1);
 uint8_t currentLed = 0xff;
 uint32_t eventCounter = 0;
-uint8_t lastScanStatus = 0; // 0=no finger, 1=match, 2=no match/error after finger image
+uint8_t lastScanStatus = 0;
 String serialCommand;
 
 static int hexVal(char c) {

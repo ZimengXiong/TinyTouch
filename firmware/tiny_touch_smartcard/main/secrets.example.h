@@ -1,10 +1,5 @@
 #pragma once
 
-// ESP-only prototype keys. Do not use these for a real login token.
-// Flash dumping this firmware reveals the private key.
-//
-// Next step for real security: replace these with a secure element operation.
-
 static const char PIV_CERT_9A_PEM[] =
 "-----BEGIN CERTIFICATE-----\n"
 "REPLACE_WITH_AUTHENTICATION_CERTIFICATE\n"
