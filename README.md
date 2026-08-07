@@ -18,7 +18,7 @@ PIV authentication of lockscreen (you know its PIV because it says PIN and not p
 
 https://github.com/user-attachments/assets/88014cb2-34d2-4d63-8998-54f0561364eb
 
-if you would like to support this work, please consider [sponsoring](https://github.com/sponsors/ZimengXiong) or contributing!
+if you would like to support this project, please consider [donating](https://github.com/sponsors/ZimengXiong) or contributing!
 
 ## table of contents
 
