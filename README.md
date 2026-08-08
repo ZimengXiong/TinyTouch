@@ -1,7 +1,7 @@
 ## interested in kit/preassembled versions? join the interest list:
 [https://alpacaengineer.ing/tinytouch](https://alpacaengineer.ing/tinytouch)
 
-UPDATE: batch 1 pre orders are opening tomorrow, August 8th at 8AM pacific, checkout https://tinytouch.dev/
+We have sold out of our batch 1 preorders...stay tuned as we scale!!
 
 <img width="2304" height="1152" alt="tinyTouch (4)" src="https://github.com/user-attachments/assets/ec66ec7d-3e14-4292-8085-15374e349057" />
 
