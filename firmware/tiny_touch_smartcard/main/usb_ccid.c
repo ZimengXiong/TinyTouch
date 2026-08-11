@@ -13,7 +13,6 @@ static const char *TAG = "usb_ccid";
 
 #define CCID_EP_OUT 0x01
 #define CCID_EP_IN 0x81
-#define CCID_EP_INT 0x82
 #define CCID_BUF_SIZE 2048
 
 static uint8_t rx_buf[CCID_BUF_SIZE];
@@ -113,15 +112,13 @@ static uint16_t ccid_open(uint8_t rhport, tusb_desc_interface_t const *itf_desc,
 
   tusb_desc_endpoint_t const *ep_out = (tusb_desc_endpoint_t const *)p_desc;
   tusb_desc_endpoint_t const *ep_in = (tusb_desc_endpoint_t const *)(p_desc + sizeof(tusb_desc_endpoint_t));
-  tusb_desc_endpoint_t const *ep_int = (tusb_desc_endpoint_t const *)(p_desc + 2 * sizeof(tusb_desc_endpoint_t));
   if (!usbd_edpt_open(rhport, ep_out) ||
-      !usbd_edpt_open(rhport, ep_in) ||
-      !usbd_edpt_open(rhport, ep_int)) return 0;
+      !usbd_edpt_open(rhport, ep_in)) return 0;
 
   rhport_active = rhport;
   ep_ready = true;
   usbd_edpt_xfer(rhport, CCID_EP_OUT, rx_buf, sizeof(rx_buf));
-  return drv_len + 3 * sizeof(tusb_desc_endpoint_t);
+  return drv_len + 2 * sizeof(tusb_desc_endpoint_t);
 }
 
 static bool ccid_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t const *request) {
@@ -160,6 +157,7 @@ usbd_class_driver_t const *usbd_app_driver_get_cb(uint8_t *driver_count) {
 
 void usb_ccid_start(ccid_apdu_handler_t handler) {
   apdu_handler = handler;
+  tiny_touch_init_serial();
   tinyusb_config_t tusb_cfg = TINYUSB_DEFAULT_CONFIG();
   tusb_cfg.descriptor.device = &tiny_touch_device_descriptor;
   tusb_cfg.descriptor.string = tiny_touch_string_descriptors;
