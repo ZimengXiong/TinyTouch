@@ -4,6 +4,7 @@
 
 #include "esp_random.h"
 #include "esp_log.h"
+#include "esp_mac.h"
 #include "fingerprint.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -11,7 +12,7 @@
 #include "mbedtls/pk.h"
 #include "mbedtls/rsa.h"
 #include "mbedtls/sha256.h"
-#include "secrets.h"
+#include "nvs.h"
 
 static const char *TAG = "piv";
 
@@ -32,7 +33,7 @@ static const uint8_t CCC_OBJECT[] = {
   0xf4, 0x01, 0x00,
   0xf5, 0x01, 0x10
 };
-static const uint8_t CHUID_OBJECT[] = {
+static uint8_t CHUID_OBJECT[] = {
   0x53, 0x3b,
   0x30, 0x19, 0xd4, 0xe7, 0x39, 0xda, 0x73, 0x9c, 0xed, 0x39, 0xce, 0x73,
               0x9d, 0x83, 0x68, 0x58, 0x21, 0x08, 0x42, 0x10, 0x84, 0x21,
@@ -43,6 +44,7 @@ static const uint8_t CHUID_OBJECT[] = {
   0x3e, 0x00,
   0xfe, 0x00
 };
+#define CHUID_GUID_OFFSET 31
 static const uint8_t KEY_HISTORY_OBJECT[] = {
   0x53, 0x09,
   0xc1, 0x01, 0x00,
@@ -52,10 +54,16 @@ static const uint8_t KEY_HISTORY_OBJECT[] = {
 
 static mbedtls_pk_context auth_key;
 static mbedtls_pk_context key_mgmt_key;
+static bool piv_keys_initialized;
 static uint8_t cert_9a_der[1536];
 static size_t cert_9a_der_len;
 static uint8_t cert_9d_der[1536];
 static size_t cert_9d_der_len;
+static char stored_cert_9a[1800];
+static char stored_key_9a[2400];
+static char stored_cert_9d[1800];
+static char stored_key_9d[2400];
+static bool using_provisioned_keys;
 static uint8_t pending_response[1800];
 static size_t pending_response_len;
 static size_t pending_response_off;
@@ -66,10 +74,10 @@ static uint8_t chained_p1;
 static uint8_t chained_p2;
 static TickType_t pin_verified_until;
 static TickType_t user_presence_until;
-static TickType_t last_user_presence_attempt;
+static TickType_t pairing_mode_until;
 static const TickType_t PIN_VERIFIED_WINDOW_TICKS = pdMS_TO_TICKS(60000);
 static const TickType_t USER_PRESENCE_WINDOW_TICKS = pdMS_TO_TICKS(10000);
-static const TickType_t USER_PRESENCE_COOLDOWN_TICKS = pdMS_TO_TICKS(1500);
+static const TickType_t PAIRING_MODE_WINDOW_TICKS = pdMS_TO_TICKS(120000);
 
 static size_t encode_len(uint8_t *out, size_t len);
 static bool respond_data(const uint8_t *data, size_t data_len, uint8_t *response,
@@ -90,6 +98,18 @@ static void decode_pem_cert(const char *pem, uint8_t *der, size_t der_cap, size_
     *der_len = 0;
     ESP_LOGW(TAG, "certificate DER decode failed: -0x%x", -rc);
   }
+}
+
+static bool load_nvs_string(nvs_handle_t handle, const char *name, char *out, size_t cap) {
+  size_t length = cap;
+  esp_err_t result = nvs_get_blob(handle, name, out, &length);
+  if (result != ESP_OK || length == 0 || length > cap) return false;
+  out[cap - 1] = '\0';
+  return true;
+}
+
+bool piv_uses_provisioned_keys(void) {
+  return using_provisioned_keys;
 }
 
 static bool append_sw(uint8_t *response, size_t *response_len, size_t response_cap,
@@ -351,6 +371,16 @@ void piv_note_user_presence(void) {
   user_presence_until = xTaskGetTickCount() + USER_PRESENCE_WINDOW_TICKS;
 }
 
+void piv_set_pairing_mode(bool enabled) {
+  pairing_mode_until = enabled ? xTaskGetTickCount() + PAIRING_MODE_WINDOW_TICKS : 0;
+}
+
+bool piv_pairing_mode_active(void) {
+  TickType_t now = xTaskGetTickCount();
+  return pairing_mode_until != 0 &&
+         (TickType_t)(pairing_mode_until - now) <= PAIRING_MODE_WINDOW_TICKS;
+}
+
 static bool handle_general_authenticate(const uint8_t *apdu, size_t apdu_len,
                                         uint8_t *response, size_t *response_len,
                                         size_t response_cap) {
@@ -393,17 +423,13 @@ static bool handle_general_authenticate(const uint8_t *apdu, size_t apdu_len,
     bool user_presence_valid = user_presence_until != 0 &&
                                (TickType_t)(user_presence_until - now) <=
                                  USER_PRESENCE_WINDOW_TICKS;
-    if (!user_presence_valid) {
-      if (last_user_presence_attempt != 0 &&
-          (TickType_t)(now - last_user_presence_attempt) < USER_PRESENCE_COOLDOWN_TICKS) {
-        return append_sw(response, response_len, response_cap, 0x6985);
-      }
-      last_user_presence_attempt = now;
-      if (!fingerprint_authorize_once()) {
-        pin_verified_until = 0;
-        user_presence_until = 0;
-        return append_sw(response, response_len, response_cap, 0x6982);
-      }
+    bool pairing_mode_valid = pairing_mode_until != 0 &&
+                              (TickType_t)(pairing_mode_until - now) <=
+                                PAIRING_MODE_WINDOW_TICKS;
+    if (!user_presence_valid && !pairing_mode_valid) {
+      pin_verified_until = 0;
+      user_presence_until = 0;
+      return append_sw(response, response_len, response_cap, 0x6982);
     }
     user_presence_until = 0;
   }
@@ -439,26 +465,77 @@ static bool handle_general_authenticate(const uint8_t *apdu, size_t apdu_len,
 }
 
 void piv_init(void) {
+  uint8_t mac[6];
+  uint8_t device_hash[32];
+  if (esp_read_mac(mac, ESP_MAC_WIFI_STA) == ESP_OK) {
+    mbedtls_sha256(mac, sizeof(mac), device_hash, 0);
+    memcpy(CHUID_OBJECT + CHUID_GUID_OFFSET, device_hash, 16);
+    CHUID_OBJECT[CHUID_GUID_OFFSET + 6] =
+      (CHUID_OBJECT[CHUID_GUID_OFFSET + 6] & 0x0f) | 0x40;
+    CHUID_OBJECT[CHUID_GUID_OFFSET + 8] =
+      (CHUID_OBJECT[CHUID_GUID_OFFSET + 8] & 0x3f) | 0x80;
+  }
+
+  const char *cert_9a_pem = NULL;
+  const char *key_9a_pem = NULL;
+  const char *cert_9d_pem = NULL;
+  const char *key_9d_pem = NULL;
+  using_provisioned_keys = false;
+  nvs_handle_t nvs_handle;
+  if (nvs_open("piv_keys", NVS_READONLY, &nvs_handle) == ESP_OK) {
+    using_provisioned_keys =
+      load_nvs_string(nvs_handle, "cert9a", stored_cert_9a, sizeof(stored_cert_9a)) &&
+      load_nvs_string(nvs_handle, "key9a", stored_key_9a, sizeof(stored_key_9a)) &&
+      load_nvs_string(nvs_handle, "cert9d", stored_cert_9d, sizeof(stored_cert_9d)) &&
+      load_nvs_string(nvs_handle, "key9d", stored_key_9d, sizeof(stored_key_9d));
+    nvs_close(nvs_handle);
+    if (using_provisioned_keys) {
+      cert_9a_pem = stored_cert_9a;
+      key_9a_pem = stored_key_9a;
+      cert_9d_pem = stored_cert_9d;
+      key_9d_pem = stored_key_9d;
+    }
+  }
+
+  if (piv_keys_initialized) {
+    mbedtls_pk_free(&auth_key);
+    mbedtls_pk_free(&key_mgmt_key);
+  }
   mbedtls_pk_init(&auth_key);
   mbedtls_pk_init(&key_mgmt_key);
+  piv_keys_initialized = true;
+  if (!using_provisioned_keys) {
+    cert_9a_der_len = 0;
+    cert_9d_der_len = 0;
+    ESP_LOGI(TAG, "PIV identity is unconfigured");
+    return;
+  }
   int rc = mbedtls_pk_parse_key(&auth_key,
-                                (const unsigned char *)PIV_PRIVATE_KEY_9A_PEM,
-                                strlen(PIV_PRIVATE_KEY_9A_PEM) + 1,
+                                (const unsigned char *)key_9a_pem,
+                                strlen(key_9a_pem) + 1,
                                 NULL, 0, NULL, NULL);
   if (rc != 0) {
-    ESP_LOGW(TAG, "auth private key not loaded; replace secrets.h placeholders");
+    ESP_LOGW(TAG, "provisioned auth private key could not be loaded");
   }
 
   rc = mbedtls_pk_parse_key(&key_mgmt_key,
-                            (const unsigned char *)PIV_PRIVATE_KEY_9D_PEM,
-                            strlen(PIV_PRIVATE_KEY_9D_PEM) + 1,
+                            (const unsigned char *)key_9d_pem,
+                            strlen(key_9d_pem) + 1,
                             NULL, 0, NULL, NULL);
   if (rc != 0) {
-    ESP_LOGW(TAG, "key-management private key not loaded; replace secrets.h placeholders");
+    ESP_LOGW(TAG, "provisioned key-management private key could not be loaded");
   }
 
-  decode_pem_cert(PIV_CERT_9A_PEM, cert_9a_der, sizeof(cert_9a_der), &cert_9a_der_len);
-  decode_pem_cert(PIV_CERT_9D_PEM, cert_9d_der, sizeof(cert_9d_der), &cert_9d_der_len);
+  decode_pem_cert(cert_9a_pem, cert_9a_der, sizeof(cert_9a_der), &cert_9a_der_len);
+  decode_pem_cert(cert_9d_pem, cert_9d_der, sizeof(cert_9d_der), &cert_9d_der_len);
+}
+
+void piv_reload_keys(void) {
+  cert_9a_der_len = 0;
+  cert_9d_der_len = 0;
+  pending_response_len = 0;
+  pending_response_off = 0;
+  piv_init();
 }
 
 bool piv_handle_apdu(const uint8_t *apdu, size_t apdu_len,

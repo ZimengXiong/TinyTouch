@@ -298,3 +298,71 @@ bool fingerprint_authorize_once(void) {
   fp_give();
   return ok;
 }
+
+int fingerprint_count(void) {
+  if (!fp_take(2000)) return -1;
+  uint8_t confirm = 0xff;
+  uint8_t data[2];
+  size_t data_len = sizeof(data);
+  bool ok = fp_command(0x1d, NULL, 0, &confirm, data, &data_len, 2000) &&
+            confirm == 0x00 && data_len == sizeof(data);
+  fp_give();
+  return ok ? ((int)data[0] << 8) | data[1] : -1;
+}
+
+static bool wait_finger_state(bool present, uint32_t timeout_ms) {
+  TickType_t start = xTaskGetTickCount();
+  TickType_t deadline = pdMS_TO_TICKS(timeout_ms);
+  while ((xTaskGetTickCount() - start) < deadline) {
+    if (finger_present() == present) return true;
+    vTaskDelay(pdMS_TO_TICKS(50));
+  }
+  return false;
+}
+
+static bool capture_template(uint8_t buffer_id) {
+  uint8_t confirm = 0xff;
+  if (!fp_command(0x01, NULL, 0, &confirm, NULL, NULL, 1500) || confirm != 0x00) return false;
+  uint8_t params[] = {buffer_id};
+  return fp_command(0x02, params, sizeof(params), &confirm, NULL, NULL, 2000) && confirm == 0x00;
+}
+
+bool fingerprint_enroll(uint16_t slot, void (*prompt)(const char *message)) {
+  if (slot < START_SLOT || slot > END_SLOT || !fp_take(1000)) return false;
+  bool ok = false;
+  set_aura(FP_LED_BLUE);
+  if (prompt) prompt("TOUCH");
+  if (!wait_finger_state(true, 15000) || !capture_template(1)) goto done;
+  if (prompt) prompt("LIFT");
+  if (!wait_finger_state(false, 10000)) goto done;
+  vTaskDelay(pdMS_TO_TICKS(250));
+  if (prompt) prompt("TOUCH_AGAIN");
+  if (!wait_finger_state(true, 15000) || !capture_template(2)) goto done;
+
+  uint8_t confirm = 0xff;
+  if (!fp_command(0x05, NULL, 0, &confirm, NULL, NULL, 2000) || confirm != 0x00) goto done;
+  uint8_t store[] = {0x01, (uint8_t)(slot >> 8), (uint8_t)slot};
+  ok = fp_command(0x06, store, sizeof(store), &confirm, NULL, NULL, 2000) && confirm == 0x00;
+
+done:
+  show_result(ok);
+  fp_give();
+  return ok;
+}
+
+bool fingerprint_delete(uint16_t slot) {
+  if (slot < START_SLOT || slot > END_SLOT || !fp_take(1000)) return false;
+  uint8_t params[] = {(uint8_t)(slot >> 8), (uint8_t)slot, 0x00, 0x01};
+  uint8_t confirm = 0xff;
+  bool ok = fp_command(0x0c, params, sizeof(params), &confirm, NULL, NULL, 2000) && confirm == 0x00;
+  fp_give();
+  return ok;
+}
+
+bool fingerprint_delete_all(void) {
+  if (!fp_take(1000)) return false;
+  uint8_t confirm = 0xff;
+  bool ok = fp_command(0x0d, NULL, 0, &confirm, NULL, NULL, 2000) && confirm == 0x00;
+  fp_give();
+  return ok;
+}

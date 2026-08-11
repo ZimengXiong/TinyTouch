@@ -206,6 +206,67 @@ static bool verifySensor() {
   return fpCommand(0x13, params, sizeof(params), &confirm, nullptr, nullptr, 2000) && confirm == 0x00;
 }
 
+static bool waitForFingerState(bool present, uint32_t timeoutMs) {
+  uint32_t start = millis();
+  while (millis() - start < timeoutMs) {
+    if (fingerPresent() == present) return true;
+    delay(50);
+  }
+  return false;
+}
+
+static bool captureTemplate(uint8_t bufferId) {
+  uint8_t confirm = 0xff;
+  if (!fpCommand(0x01, nullptr, 0, &confirm, nullptr, nullptr, 1500) || confirm != 0x00) {
+    return false;
+  }
+  uint8_t params[] = {bufferId};
+  return fpCommand(0x02, params, sizeof(params), &confirm, nullptr, nullptr, 2000) && confirm == 0x00;
+}
+
+static bool enrollFingerprint(uint16_t slot) {
+  if (slot < START_SLOT || slot > END_SLOT) return false;
+  setAura(FP_LED_WHITE);
+  Serial.println("PROMPT TOUCH");
+  Serial.flush();
+  if (!waitForFingerState(true, 15000) || !captureTemplate(1)) return false;
+
+  Serial.println("PROMPT LIFT");
+  Serial.flush();
+  if (!waitForFingerState(false, 10000)) return false;
+  delay(250);
+
+  Serial.println("PROMPT TOUCH_AGAIN");
+  Serial.flush();
+  if (!waitForFingerState(true, 15000) || !captureTemplate(2)) return false;
+
+  uint8_t confirm = 0xff;
+  if (!fpCommand(0x05, nullptr, 0, &confirm, nullptr, nullptr, 2000) || confirm != 0x00) return false;
+  uint8_t store[] = {0x01, (uint8_t)(slot >> 8), (uint8_t)(slot & 0xff)};
+  return fpCommand(0x06, store, sizeof(store), &confirm, nullptr, nullptr, 2000) && confirm == 0x00;
+}
+
+static bool deleteFingerprint(uint16_t slot) {
+  if (slot < START_SLOT || slot > END_SLOT) return false;
+  uint8_t params[] = {(uint8_t)(slot >> 8), (uint8_t)slot, 0x00, 0x01};
+  uint8_t confirm = 0xff;
+  return fpCommand(0x0c, params, sizeof(params), &confirm, nullptr, nullptr, 2000) && confirm == 0x00;
+}
+
+static bool deleteAllFingerprints() {
+  uint8_t confirm = 0xff;
+  return fpCommand(0x0d, nullptr, 0, &confirm, nullptr, nullptr, 2000) && confirm == 0x00;
+}
+
+static int fingerprintCount() {
+  uint8_t confirm = 0xff;
+  uint8_t data[2];
+  size_t dataLen = sizeof(data);
+  if (!fpCommand(0x1d, nullptr, 0, &confirm, data, &dataLen, 2000) ||
+      confirm != 0x00 || dataLen != sizeof(data)) return -1;
+  return ((int)data[0] << 8) | data[1];
+}
+
 static bool scanMatch(uint16_t *matchId, uint16_t *score) {
   lastScanStatus = 0;
   setAura(FP_LED_WHITE);
@@ -367,6 +428,22 @@ static void handleSerialCommands() {
       serialCommand.trim();
       if (serialCommand == "PING") {
         Serial.println("PONG");
+      } else if (serialCommand == "STATUS") {
+        int count = fingerprintCount();
+        if (count >= 0) Serial.printf("OK STATUS mode=hid sensor=ok fingerprints=%d\n", count);
+        else Serial.println("ERR STATUS sensor");
+      } else if (serialCommand.startsWith("ENROLL ")) {
+        uint16_t slot = (uint16_t)serialCommand.substring(7).toInt();
+        bool ok = enrollFingerprint(slot);
+        Serial.printf(ok ? "OK ENROLL slot=%u\n" : "ERR ENROLL slot=%u\n", slot);
+        setAura(ok ? FP_LED_GREEN : FP_LED_RED);
+      } else if (serialCommand.startsWith("DELETE ")) {
+        uint16_t slot = (uint16_t)serialCommand.substring(7).toInt();
+        bool ok = deleteFingerprint(slot);
+        Serial.printf(ok ? "OK DELETE slot=%u\n" : "ERR DELETE slot=%u\n", slot);
+      } else if (serialCommand == "DELETE_ALL") {
+        bool ok = deleteAllFingerprints();
+        Serial.println(ok ? "OK DELETE_ALL" : "ERR DELETE_ALL");
       } else if (ENABLE_TEST_COMMANDS && serialCommand == "TYPE_TEST") {
         const uint8_t test[] = "HID_TEST_OK";
         typeAscii(test, sizeof(test) - 1);
