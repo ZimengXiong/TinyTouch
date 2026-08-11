@@ -4,9 +4,10 @@
 <img width="2304" height="1152" alt="tinyTouch (4)" src="https://github.com/user-attachments/assets/ec66ec7d-3e14-4292-8085-15374e349057" />
 
 # tinytouch
-
 authenticate, sudo, and log in with your fingerprint wire(less)ly without having
 to spend $149.
+
+build guide: https://www.youtube.com/watch?v=YsP1hRg28Gw
 
 https://github.com/user-attachments/assets/efede271-6d84-441d-919c-f5532f687c4e
 
@@ -19,6 +20,7 @@ PIV authentication of lockscreen (you know its PIV because it says PIN and not p
 https://github.com/user-attachments/assets/88014cb2-34d2-4d63-8998-54f0561364eb
 
 if you would like to support this project, please consider [donating](https://github.com/sponsors/ZimengXiong) or contributing!
+
 
 ## table of contents
 
