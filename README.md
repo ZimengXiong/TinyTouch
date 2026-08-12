@@ -1,5 +1,5 @@
 ## interested in preassembled versions? pre order now:
-[tinytouch.dev](tinytouch.dev)
+[tinytouch.dev](https://tinytouch.dev)
 
 <img width="2304" height="1152" alt="tinyTouch (4)" src="https://github.com/user-attachments/assets/ec66ec7d-3e14-4292-8085-15374e349057" />
 
