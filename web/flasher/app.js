@@ -3,9 +3,9 @@ import { ESPLoader, Transport } from "./vendor/esptool-js.js";
 const images = [
   ["Bootloader", "./firmware/bootloader.bin", 0x0, "e0d0bd59a704ca41492582cd997fac0a9e4eb3fd7efbc1583a4658842905c978"],
   ["Partition table", "./firmware/partition-table.bin", 0x8000, "7f00b6c042a89b15b0cac534f82ed988caf29278ff5700b0c511eb1b5bb7c820"],
-  ["Unified firmware", "./firmware/tiny_touch_smartcard.bin", 0x10000, "a0b8b92833f12bc6cd5ae71a550a634eeaf4fe49159f061cc8eef16bb317dc2f"],
+  ["Unified firmware", "./firmware/tiny_touch_smartcard.bin", 0x10000, "d110f8b0e3d4d652b94ae78dbe19111ebec813be15e711eb8cfbc1e50da6bf2c"],
 ];
-const totalBytes = 413904;
+const totalBytes = 414032;
 const button = document.querySelector("#flash");
 const message = document.querySelector("#message");
 const browserNote = document.querySelector("#browser-note");
@@ -52,8 +52,11 @@ async function loadFirmware() {
 function friendlyError(error) {
   const text = error instanceof Error ? error.message : String(error);
   if (/notfound|no port selected|chooser/i.test(text)) return "No board was selected. Nothing was flashed.";
-  if (/connect|serial data|timeout|sync/i.test(text)) return "Could not connect. Hold BOOT, tap RESET, release BOOT, then try again.";
-  if (/already open|busy|networkerror/i.test(text)) return "The serial port is busy. Close other firmware or serial tools and try again.";
+  if (/securityerror|permission denied|access denied/i.test(text)) return "Chrome does not have permission to use this serial port. Reload the page, select the board again, and approve access.";
+  if (/already open|busy|networkerror/i.test(text)) return "The serial port is busy or was disconnected. Close serial monitors and other flashing tabs, reconnect the board, then try again.";
+  if (/connect|serial data|timeout|sync|bootloader/i.test(text)) return "The ESP32-S3 did not enter download mode. Hold BOOT, tap RESET, release BOOT, then try again.";
+  if (/could not be downloaded/i.test(text)) return `${text} Check your internet connection, reload the page, and try again.`;
+  if (/integrity check/i.test(text)) return `${text} Reload the page before trying again; do not flash a file that failed verification.`;
   return text || "Flashing stopped. Nothing else was changed.";
 }
 

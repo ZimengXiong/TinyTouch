@@ -174,8 +174,15 @@ static void handle_command(void) {
     send_line("PONG");
   } else if (strcmp(command, "STATUS") == 0) {
     int count = fingerprint_count();
-    if (count < 0) send_line("ERR STATUS sensor");
-    else {
+    if (count < 0) {
+      snprintf(line, sizeof(line),
+               "OK STATUS firmware=unified mode=%s sensor=no_response fingerprints=unknown "
+               "keys=%s hid_key=%s",
+               device_config_mode_name(),
+               piv_uses_provisioned_keys() ? "nvs" : "unconfigured",
+               device_config_hid_key_configured() ? "configured" : "unconfigured");
+      send_line(line);
+    } else {
       snprintf(line, sizeof(line),
                "OK STATUS firmware=unified mode=%s sensor=ok fingerprints=%d "
                "keys=%s hid_key=%s",
