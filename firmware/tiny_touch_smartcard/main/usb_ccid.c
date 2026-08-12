@@ -165,8 +165,3 @@ void usb_ccid_start(ccid_apdu_handler_t handler) {
   tusb_cfg.descriptor.full_speed_config = tiny_touch_fs_configuration_descriptor;
   ESP_ERROR_CHECK(tinyusb_driver_install(&tusb_cfg));
 }
-
-void usb_ccid_task(void) {
-  (void)ep_ready;
-  tud_task();
-}
