@@ -22,8 +22,12 @@ static const uint32_t FINGER_WAIT_MS = 7000;
 static const uint8_t FP_LED_BLUE = 0x01;
 static const uint8_t FP_LED_GREEN = 0x02;
 static const uint8_t FP_LED_RED = 0x04;
-static const uint8_t FP_LED_FUNC_FLASH = 2;
+static const uint8_t FP_LED_OFF = 0x00;
 static const uint8_t FP_LED_FUNC_STEADY = 3;
+// Each half of the result blink. The blink is built from steady commands rather than
+// the sensor's own flash mode, so no program is ever left running for a later command
+// to fight with.
+static const uint32_t FP_BLINK_HALF_MS = 130;
 
 static uint8_t current_led = 0xff;
 static SemaphoreHandle_t fp_mutex;
@@ -128,24 +132,37 @@ static void fp_give(void) {
   if (fp_mutex) xSemaphoreGive(fp_mutex);
 }
 
+// Only records the colour when the sensor actually acknowledged it. Caching
+// unconditionally is what used to strand the aura: a dropped command left the cache
+// claiming a colour the hardware was not showing, and the equality guard above then
+// suppressed every later attempt to correct it, so the LED stayed stuck on whatever
+// it was doing until something happened to invalidate the cache.
 static void set_aura(uint8_t color) {
   if (color == current_led) return;
   uint8_t params[] = {FP_LED_FUNC_STEADY, color, color, 0};
   uint8_t confirm = 0xff;
-  fp_command(0x3c, params, sizeof(params), &confirm, NULL, NULL, 1000);
-  current_led = color;
+  if (fp_command(0x3c, params, sizeof(params), &confirm, NULL, NULL, 1000) &&
+      confirm == 0x00) {
+    current_led = color;
+  } else {
+    current_led = 0xff;  // unknown state; let the next call retry
+  }
 }
 
-static void flash_aura(uint8_t color) {
-  uint8_t params[] = {FP_LED_FUNC_FLASH, 40, color, 2};
-  uint8_t confirm = 0xff;
-  fp_command(0x3c, params, sizeof(params), &confirm, NULL, NULL, 1000);
-  current_led = 0xff;
+// Blink using steady colours. The sensor's flash mode was used here before, which
+// left a multi-cycle program running on the sensor; the steady command that followed
+// 350 ms later arrived mid-program and was discarded.
+static void blink_aura(uint8_t color, int times) {
+  for (int i = 0; i < times; i++) {
+    set_aura(color);
+    vTaskDelay(pdMS_TO_TICKS(FP_BLINK_HALF_MS));
+    set_aura(FP_LED_OFF);
+    vTaskDelay(pdMS_TO_TICKS(FP_BLINK_HALF_MS));
+  }
 }
 
 static void show_result(bool ok) {
-  flash_aura(ok ? FP_LED_GREEN : FP_LED_RED);
-  vTaskDelay(pdMS_TO_TICKS(350));
+  blink_aura(ok ? FP_LED_GREEN : FP_LED_RED, 2);
   set_aura(FP_LED_BLUE);
 }
 
