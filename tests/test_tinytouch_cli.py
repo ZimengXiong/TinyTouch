@@ -32,7 +32,7 @@ class PackagingTests(unittest.TestCase):
                 cli.choose_mode(None)
         self.assertIn("--mode piv", str(context.exception))
 
-    def test_frozen_cli_installs_itself_and_updates_zprofile(self):
+    def test_frozen_cli_installs_itself_and_updates_shell_profiles(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
             source = home / "downloaded-tinytouch"
@@ -48,7 +48,24 @@ class PackagingTests(unittest.TestCase):
             ):
                 cli.install_command_if_needed()
             self.assertEqual(install_path.read_bytes(), source.read_bytes())
+            # .zprofile covers login shells, .zshrc covers shells started without -l.
             self.assertIn(".local/bin", (home / ".zprofile").read_text())
+            self.assertIn(".local/bin", (home / ".zshrc").read_text())
+
+    def test_path_line_is_not_added_twice(self):
+        with tempfile.TemporaryDirectory() as directory:
+            profile = Path(directory) / ".zshrc"
+            profile.write_text("alias ll='ls -l'\n")
+            self.assertTrue(cli.add_local_bin_to_profile(profile))
+            self.assertFalse(cli.add_local_bin_to_profile(profile))
+            self.assertEqual(profile.read_text().count(".local/bin"), 2)
+
+    def test_path_line_left_alone_when_user_already_set_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            profile = Path(directory) / ".zprofile"
+            profile.write_text('export PATH="$HOME/.local/bin:$PATH"\n')
+            self.assertFalse(cli.add_local_bin_to_profile(profile))
+            self.assertNotIn("tinyTouch", profile.read_text())
 
     def test_unhealthy_sensor_status_still_identifies_unified_firmware(self):
         response = [
