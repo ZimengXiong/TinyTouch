@@ -98,13 +98,23 @@ def install_command_if_needed() -> None:
         installed = True
 
     path_added = False
-    profile = Path.home() / ".zprofile"
+    shell_name = Path(os.environ.get("SHELL", "/bin/zsh")).name
+    if shell_name == "fish":
+        profile = Path.home() / ".config" / "fish" / "config.fish"
+        path_line = 'fish_add_path "$HOME/.local/bin" # tinyTouch\n'
+    elif shell_name == "bash":
+        profile = Path.home() / ".bash_profile"
+        path_line = 'export PATH="$HOME/.local/bin:$PATH" # tinyTouch\n'
+    else:
+        profile = Path.home() / ".zprofile"
+        path_line = 'export PATH="$HOME/.local/bin:$PATH" # tinyTouch\n'
     existing = profile.read_text(encoding="utf-8") if profile.exists() else ""
     if ".local/bin" not in existing:
+        profile.parent.mkdir(parents=True, exist_ok=True)
         with profile.open("a", encoding="utf-8") as handle:
             if existing and not existing.endswith("\n"):
                 handle.write("\n")
-            handle.write('export PATH="$HOME/.local/bin:$PATH" # tinyTouch\n')
+            handle.write(path_line)
         path_added = True
     local_bin = str(CLI_INSTALL_DIR)
     if local_bin not in os.environ.get("PATH", "").split(os.pathsep):

@@ -50,6 +50,25 @@ class PackagingTests(unittest.TestCase):
             self.assertEqual(install_path.read_bytes(), source.read_bytes())
             self.assertIn(".local/bin", (home / ".zprofile").read_text())
 
+    def test_frozen_cli_updates_fish_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            source = home / "downloaded-tinytouch"
+            source.write_bytes(b"signed executable")
+            install_dir = home / ".local" / "bin"
+            install_path = install_dir / "tinytouch"
+            with (
+                mock.patch.object(cli, "FROZEN", True),
+                mock.patch.object(cli, "CLI_INSTALL_DIR", install_dir),
+                mock.patch.object(cli, "CLI_INSTALL_PATH", install_path),
+                mock.patch.object(cli.sys, "executable", str(source)),
+                mock.patch.object(cli.Path, "home", return_value=home),
+                mock.patch.dict(cli.os.environ, {"SHELL": "/opt/homebrew/bin/fish"}),
+            ):
+                cli.install_command_if_needed()
+            fish_config = home / ".config" / "fish" / "config.fish"
+            self.assertIn('fish_add_path "$HOME/.local/bin"', fish_config.read_text())
+
     def test_unhealthy_sensor_status_still_identifies_unified_firmware(self):
         response = [
             "OK STATUS firmware=unified mode=piv sensor=no_response "
