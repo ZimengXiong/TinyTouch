@@ -38,6 +38,7 @@ DEFAULT_DEVICE_ACCOUNT = "B8F862FB478C"
 CLI_INSTALL_DIR = Path.home() / ".local" / "bin"
 CLI_INSTALL_PATH = CLI_INSTALL_DIR / "tinytouch"
 VERBOSE = False
+HELPER_SUSPENDED = False
 FACTORY_FLASH_URL = "https://alpacaengineer.ing/tinytouch/batch-0/flash/"
 
 
@@ -468,22 +469,67 @@ def launch_agent_contents(python: Path) -> bytes:
     return plistlib.dumps(payload, sort_keys=False)
 
 
+def helper_job_loaded() -> bool:
+    result = subprocess.run(
+        ["launchctl", "print", f"gui/{os.getuid()}/com.tinytouch.helper"],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return result.returncode == 0
+
+
+def helper_processes_running() -> bool:
+    patterns = (str(INSTALLED_SERVICE) + " _helper", str(HELPER))
+    return any(
+        subprocess.run(
+            ["pgrep", "-f", pattern],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).returncode == 0
+        for pattern in patterns
+    )
+
+
 def unload_helper() -> bool:
-    if not LAUNCH_AGENT.exists():
+    was_running = helper_job_loaded() or helper_processes_running()
+    if not was_running:
         return False
-    subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}", str(LAUNCH_AGENT)], check=False,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return True
+    if LAUNCH_AGENT.exists():
+        subprocess.run(
+            ["launchctl", "bootout", f"gui/{os.getuid()}", str(LAUNCH_AGENT)],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    patterns = (str(INSTALLED_SERVICE) + " _helper", str(HELPER))
+    for pattern in patterns:
+        subprocess.run(
+            ["pkill", "-TERM", "-f", pattern],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    deadline = time.monotonic() + 6
+    while helper_job_loaded() or helper_processes_running():
+        if time.monotonic() >= deadline:
+            raise ToolError(
+                "The HID background service did not release the serial port. Run "
+                "'tinytouch status' again; if this repeats, unplug and reconnect tinyTouch."
+            )
+        time.sleep(0.05)
+    time.sleep(0.15)
+    return was_running
 
 
 def remove_helper() -> None:
-    if unload_helper():
-        LAUNCH_AGENT.unlink(missing_ok=True)
+    unload_helper()
+    LAUNCH_AGENT.unlink(missing_ok=True)
 
 
 def load_helper() -> None:
-    subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}", str(LAUNCH_AGENT)], check=False,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    unload_helper()
     run(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(LAUNCH_AGENT)])
 
 
@@ -501,7 +547,8 @@ def install_helper(python: Path) -> None:
         temporary.replace(INSTALLED_SERVICE)
     LAUNCH_AGENT.parent.mkdir(parents=True, exist_ok=True)
     LAUNCH_AGENT.write_bytes(launch_agent_contents(python))
-    load_helper()
+    if not HELPER_SUSPENDED:
+        load_helper()
 
 
 def prompt_password() -> str:
@@ -589,7 +636,7 @@ def serial_command(port: str, command: str, *, timeout: float = 20.0) -> list[st
     except ImportError as exc:
         raise ToolError("pyserial is required. Run 'tinytouch setup' or install requirements.txt.") from exc
 
-    was_loaded = unload_helper()
+    was_loaded = False if HELPER_SUSPENDED else unload_helper()
     lines: list[str] = []
     try:
         try:
@@ -1271,7 +1318,7 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    global VERBOSE
+    global VERBOSE, HELPER_SUSPENDED
     if FROZEN and len(sys.argv) > 1 and sys.argv[1] == "_helper":
         sys.argv = ["tinytouch-helper", *sys.argv[2:]]
         from tinytouch_helper import main as helper_main  # type: ignore
@@ -1281,16 +1328,31 @@ def main() -> int:
     install_command_if_needed()
     args = parser().parse_args()
     VERBOSE = args.verbose
+    device_commands = {
+        "setup", "mode", "status", "test", "enroll", "pair", "keys",
+        "factory-reset", "delete", "bootloader",
+    }
+    helper_was_loaded = False
     try:
         show_startup_mark()
-        if args.command in {"setup", "mode", "status", "test", "enroll", "pair", "keys", "factory-reset", "delete", "bootloader"}:
+        if args.command in device_commands:
             reexec_in_environment_if_needed()
+            helper_was_loaded = unload_helper()
+            HELPER_SUSPENDED = True
         args.func(args)
         return 0
     except (ToolError, KeyboardInterrupt, EOFError) as exc:
         message = str(exc) or "cancelled"
         print(f"tinytouch: {message}", file=sys.stderr)
         return 1
+    finally:
+        if HELPER_SUSPENDED:
+            HELPER_SUSPENDED = False
+            if LAUNCH_AGENT.exists() and (helper_was_loaded or args.command in {"setup", "mode"}):
+                try:
+                    load_helper()
+                except ToolError as exc:
+                    print(f"tinytouch: HID background service could not restart: {exc}", file=sys.stderr)
 
 
 if __name__ == "__main__":
