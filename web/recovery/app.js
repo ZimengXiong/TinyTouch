@@ -81,7 +81,7 @@ button.addEventListener("click", async () => {
     const written = fileArray.map(() => 0);
     stage.textContent = "Writing recovery firmware";
     await loader.writeFlash({
-      fileArray, flashMode:"dio", flashFreq:"80m", flashSize:"detect", eraseAll:false, compress:true,
+      fileArray, flashMode:"dio", flashFreq:"80m", flashSize:"4MB", eraseAll:false, compress:true,
       reportProgress(index, amount) {
         written[index] = amount;
         const value = Math.min(100, Math.round(written.reduce((sum, item) => sum + item, 0) / totalBytes * 100));
