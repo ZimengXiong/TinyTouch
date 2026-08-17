@@ -6,6 +6,7 @@ __pycache__/
 firmware/tiny_touch_keyboard/secrets.h
 firmware/tiny_touch_smartcard/main/secrets.h
 firmware/tiny_touch_smartcard/build/
+firmware/tiny_touch_smartcard/build-recovery/
 firmware/tiny_touch_smartcard/managed_components/
 firmware/tiny_touch_smartcard/sdkconfig.old
 

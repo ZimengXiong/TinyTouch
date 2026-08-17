@@ -11,3 +11,7 @@ idf_component_register(
   INCLUDE_DIRS "."
   REQUIRES driver esp_timer esp_tinyusb mbedtls nvs_flash
 )
+
+if(TINYTOUCH_RECOVERY_BUILD)
+  target_compile_definitions(${COMPONENT_LIB} PRIVATE TINYTOUCH_RECOVERY_BUILD=1)
+endif()
