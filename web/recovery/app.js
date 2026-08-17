@@ -95,7 +95,7 @@ button.addEventListener("click", async () => {
     await loader.after("hard_reset");
     await transport.disconnect();
     transport = undefined;
-    show("Recovery firmware installed. Wait 20 seconds, unplug and reconnect once, then run tinytouch setup.", "success");
+    show("Recovery firmware installed. Unplug and reconnect the device, wait 20 seconds, then run tinytouch setup.", "success");
     button.textContent = "Recover another device";
   } catch (error) {
     show(friendlyError(error), "error");
