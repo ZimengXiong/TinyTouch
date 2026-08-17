@@ -22,10 +22,30 @@ static const uint32_t FINGER_WAIT_MS = 7000;
 static const uint8_t FP_LED_BLUE = 0x01;
 static const uint8_t FP_LED_GREEN = 0x02;
 static const uint8_t FP_LED_RED = 0x04;
-static const uint8_t FP_LED_FUNC_FLASH = 2;
+static const uint8_t FP_LED_OFF = 0x00;
 static const uint8_t FP_LED_FUNC_STEADY = 3;
+static const uint8_t FP_LED_FUNC_FADE_OUT = 6;
+// Cycle length handed to the sensor's fade program, in its own units.
+static const uint8_t FP_LED_FADE_SPEED = 60;
+// How long the sensor's ramp takes to reach dark, measured on the bench at speed 60.
+// The blackout below lands just as it bottoms out; landing early clips the fade.
+static const uint32_t FP_FADE_MS = 1400;
+// Attempts to land the closing blackout while the fade program is still running.
+static const int FP_BLACKOUT_TRIES = 10;
+static const uint32_t FP_BLACKOUT_RETRY_MS = 40;
+// Each half of the result blink. The blink is built from steady commands rather than
+// the sensor's own flash mode, so no program is ever left running for a later command
+// to fight with.
+static const uint32_t FP_BLINK_HALF_MS = 130;
+// How long the sensor must read no finger before the aura fades out and sleeps.
+static const uint32_t FP_SLEEP_AFTER_MS = 3000;
+// Consecutive active reads of the detect pin that count as a finger.
+static const uint8_t FP_FINGER_DEBOUNCE_TICKS = 2;
 
 static uint8_t current_led = 0xff;
+static bool aura_awake = false;
+static TickType_t last_finger_tick = 0;
+static uint8_t finger_ticks = 0;
 static SemaphoreHandle_t fp_mutex;
 
 static uint16_t fp_checksum(uint8_t packet_id, const uint8_t *payload, size_t payload_len) {
@@ -128,31 +148,76 @@ static void fp_give(void) {
   if (fp_mutex) xSemaphoreGive(fp_mutex);
 }
 
+// Only records the colour when the sensor actually acknowledged it. Caching
+// unconditionally is what used to strand the aura: a dropped command left the cache
+// claiming a colour the hardware was not showing, and the equality guard above then
+// suppressed every later attempt to correct it, so the LED stayed stuck on whatever
+// it was doing until something happened to invalidate the cache.
 static void set_aura(uint8_t color) {
   if (color == current_led) return;
   uint8_t params[] = {FP_LED_FUNC_STEADY, color, color, 0};
   uint8_t confirm = 0xff;
-  fp_command(0x3c, params, sizeof(params), &confirm, NULL, NULL, 1000);
-  current_led = color;
+  if (fp_command(0x3c, params, sizeof(params), &confirm, NULL, NULL, 1000) &&
+      confirm == 0x00) {
+    current_led = color;
+  } else {
+    current_led = 0xff;  // unknown state; let the next call retry
+  }
 }
 
-static void flash_aura(uint8_t color) {
-  uint8_t params[] = {FP_LED_FUNC_FLASH, 40, color, 2};
+// Blink using steady colours. The sensor's flash mode was used here before, which
+// left a multi-cycle program running on the sensor; the steady command that followed
+// 350 ms later arrived mid-program and was discarded.
+static void blink_aura(uint8_t color, int times) {
+  for (int i = 0; i < times; i++) {
+    set_aura(color);
+    vTaskDelay(pdMS_TO_TICKS(FP_BLINK_HALF_MS));
+    set_aura(FP_LED_OFF);
+    vTaskDelay(pdMS_TO_TICKS(FP_BLINK_HALF_MS));
+  }
+}
+
+// The sensor repaints its own aura while it captures and matches, so after any capture
+// the cache can claim a colour the hardware is no longer showing. The equality guard in
+// set_aura would then discard the correction as redundant and leave the sensor showing
+// whatever it chose. Anything following a capture must therefore distrust the cache.
+static void force_aura(uint8_t color) {
+  current_led = 0xff;
+  set_aura(color);
+}
+
+// Fade in hardware, then insist on darkness. The sensor ignores the cycle-count
+// parameter: every non-steady program it accepts runs until another command replaces
+// it, which is why the old flash-mode blink and the bare fade both ran forever. While
+// a program runs the sensor also discards incoming commands, so the closing blackout
+// has to be retried until one is acknowledged. Firmware cannot dim the LED itself --
+// every step costs a UART round trip, which caps the duty cycle near 12 Hz and reads
+// as flashing rather than a fade -- so the sensor has to do the ramp.
+static void fade_out_aura(void) {
+  uint8_t params[] = {FP_LED_FUNC_FADE_OUT, FP_LED_FADE_SPEED, FP_LED_BLUE, 1};
   uint8_t confirm = 0xff;
   fp_command(0x3c, params, sizeof(params), &confirm, NULL, NULL, 1000);
   current_led = 0xff;
+  vTaskDelay(pdMS_TO_TICKS(FP_FADE_MS));
+
+  for (int attempt = 0; attempt < FP_BLACKOUT_TRIES; attempt++) {
+    force_aura(FP_LED_OFF);
+    if (current_led == FP_LED_OFF) return;  // set_aura only caches an acknowledged write
+    vTaskDelay(pdMS_TO_TICKS(FP_BLACKOUT_RETRY_MS));
+  }
 }
 
 static void show_result(bool ok) {
-  flash_aura(ok ? FP_LED_GREEN : FP_LED_RED);
-  vTaskDelay(pdMS_TO_TICKS(350));
+  blink_aura(ok ? FP_LED_GREEN : FP_LED_RED, 2);
   set_aura(FP_LED_BLUE);
 }
 
 void fingerprint_led_idle(void) {
   if (!fp_take(1000)) return;
-  set_aura(FP_LED_BLUE);
+  force_aura(FP_LED_BLUE);
   fp_give();
+  aura_awake = true;
+  last_finger_tick = xTaskGetTickCount();
 }
 
 static bool finger_present(void) {
@@ -161,6 +226,37 @@ static bool finger_present(void) {
 
 bool fingerprint_present_hint(void) {
   return finger_present();
+}
+
+// Drives the idle aura from the finger-detect pin: wake to blue the moment a finger
+// lands, fade out and sleep once the sensor has read no finger for FP_SLEEP_AFTER_MS.
+// Only transitions talk to the sensor, so the poll loop does not resend on every tick.
+// Takes the mutex without waiting; a tick skipped because a match holds it costs
+// nothing, since the next tick re-evaluates the same state.
+void fingerprint_led_tick(void) {
+  TickType_t now = xTaskGetTickCount();
+  // Debounce the detect pin. A single stray active read is not a touch, and without
+  // this a flapping pin walks the aura through wake and sleep forever.
+  if (finger_present()) {
+    if (finger_ticks < FP_FINGER_DEBOUNCE_TICKS) finger_ticks++;
+  } else {
+    finger_ticks = 0;
+  }
+
+  if (finger_ticks >= FP_FINGER_DEBOUNCE_TICKS) {
+    last_finger_tick = now;
+    if (aura_awake) return;
+    if (!fp_take(0)) return;
+    force_aura(FP_LED_BLUE);
+    fp_give();
+    aura_awake = true;
+    return;
+  }
+  if (!aura_awake || (now - last_finger_tick) < pdMS_TO_TICKS(FP_SLEEP_AFTER_MS)) return;
+  if (!fp_take(0)) return;
+  fade_out_aura();
+  fp_give();
+  aura_awake = false;
 }
 
 static bool fingerprint_match_captured(bool quiet) {
@@ -234,7 +330,14 @@ bool fingerprint_authorize_poll_once(void) {
     fp_give();
     return false;
   }
-  bool ok = fingerprint_match_captured(true);
+  // A finger is down and an image was captured. Acknowledge the touch in blue, then let
+  // the match paint its own green or red result: this poll is the only path a normal HID
+  // touch takes, so running it quiet left the aura entirely to the sensor.
+  force_aura(FP_LED_BLUE);
+  aura_awake = true;
+  bool ok = fingerprint_match_captured(false);
+  force_aura(FP_LED_BLUE);
+  last_finger_tick = xTaskGetTickCount();
   fp_give();
   return ok;
 }

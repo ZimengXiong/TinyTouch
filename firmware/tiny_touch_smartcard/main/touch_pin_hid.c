@@ -203,6 +203,7 @@ static void touch_hid_task(void *arg) {
       }
       last_success = xTaskGetTickCount();
     }
+    fingerprint_led_tick();
     vTaskDelay(pdMS_TO_TICKS(250));
   }
 }

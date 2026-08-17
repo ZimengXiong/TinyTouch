@@ -37,6 +37,11 @@ ACCOUNT = "tinyTouch"
 DEFAULT_DEVICE_ACCOUNT = "B8F862FB478C"
 CLI_INSTALL_DIR = Path.home() / ".local" / "bin"
 CLI_INSTALL_PATH = CLI_INSTALL_DIR / "tinytouch"
+PATH_EXPORT_LINE = (
+    "# tinyTouch CLI\n"
+    'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; '
+    '*) export PATH="$HOME/.local/bin:$PATH" ;; esac\n'
+)
 VERBOSE = False
 FACTORY_FLASH_URL = "https://alpacaengineer.ing/tinytouch/batch-0/flash/"
 
@@ -76,6 +81,27 @@ def step(number: int, total: int, title: str) -> None:
     say(f"Step {number} of {total}: {title}")
 
 
+def shell_profiles() -> tuple[Path, ...]:
+    """Shell files that should put ~/.local/bin on PATH.
+
+    Login shells read .zprofile, but shells started without -l (editor terminals,
+    some multiplexers) only read .zshrc, so write both.
+    """
+    return (Path.home() / ".zprofile", Path.home() / ".zshrc")
+
+
+def add_local_bin_to_profile(profile: Path) -> bool:
+    """Put ~/.local/bin on PATH in one shell profile. True when the file changed."""
+    existing = profile.read_text(encoding="utf-8") if profile.exists() else ""
+    if ".local/bin" in existing:
+        return False
+    with profile.open("a", encoding="utf-8") as handle:
+        if existing and not existing.endswith("\n"):
+            handle.write("\n")
+        handle.write(PATH_EXPORT_LINE)
+    return True
+
+
 def install_command_if_needed() -> None:
     """Install the frozen CLI on PATH without interrupting the requested command."""
     if not FROZEN:
@@ -97,14 +123,9 @@ def install_command_if_needed() -> None:
         installed = True
 
     path_added = False
-    profile = Path.home() / ".zprofile"
-    existing = profile.read_text(encoding="utf-8") if profile.exists() else ""
-    if ".local/bin" not in existing:
-        with profile.open("a", encoding="utf-8") as handle:
-            if existing and not existing.endswith("\n"):
-                handle.write("\n")
-            handle.write('export PATH="$HOME/.local/bin:$PATH" # tinyTouch\n')
-        path_added = True
+    for profile in shell_profiles():
+        if add_local_bin_to_profile(profile):
+            path_added = True
     local_bin = str(CLI_INSTALL_DIR)
     if local_bin not in os.environ.get("PATH", "").split(os.pathsep):
         os.environ["PATH"] = local_bin + os.pathsep + os.environ.get("PATH", "")
@@ -112,7 +133,8 @@ def install_command_if_needed() -> None:
     if installed or path_added:
         say("Installed command: tinytouch")
         if path_added:
-            say("Future Terminal windows can run it from anywhere.")
+            say("New Terminal windows can run it from anywhere.")
+            say("To use it in this one, reload the shell: exec zsh -l")
 
 
 def ask(prompt: str, *, noninteractive_hint: str | None = None) -> str:
