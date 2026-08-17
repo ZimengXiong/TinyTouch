@@ -1,0 +1,10 @@
+[Unit]
+Description=Hourly TinyTouch SQLite off-host backup
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+Unit=tinytouch-backup.service
+
+[Install]
+WantedBy=timers.target
