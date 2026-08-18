@@ -12,15 +12,23 @@ jobs:
   firmware:
     runs-on: ubuntu-latest
     container: espressif/idf:release-v5.3
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - name: Match tag to shared version
         shell: bash
         run: test "${GITHUB_REF_NAME#v}" = "$(tr -d '[:space:]' < VERSION)"
-      - run: idf.py -C firmware/tiny_touch_smartcard build
-      - run: idf.py -C firmware/tiny_touch_smartcard -B firmware/tiny_touch_smartcard/build-recovery -D TINYTOUCH_RECOVERY_BUILD=ON build
+      - run: |
+          source /opt/esp/idf/export.sh
+          idf.py -C firmware/tiny_touch_smartcard build
+      - run: |
+          source /opt/esp/idf/export.sh
+          idf.py -C firmware/tiny_touch_smartcard -B firmware/tiny_touch_smartcard/build-recovery -D TINYTOUCH_RECOVERY_BUILD=ON build
       - name: Assemble firmware release
         run: |
+          source /opt/esp/idf/export.sh
           python packaging/assemble-release.py \
             --firmware-build firmware/tiny_touch_smartcard/build \
             --recovery-build firmware/tiny_touch_smartcard/build-recovery
