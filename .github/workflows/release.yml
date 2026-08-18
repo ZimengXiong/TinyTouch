@@ -16,7 +16,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Match tag to shared version
         shell: bash
         run: test "${GITHUB_REF_NAME#v}" = "$(tr -d '[:space:]' < VERSION)"
@@ -32,7 +32,7 @@ jobs:
           python packaging/assemble-release.py \
             --firmware-build firmware/tiny_touch_smartcard/build \
             --recovery-build firmware/tiny_touch_smartcard/build-recovery
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: firmware-release
           path: dist/release
@@ -40,10 +40,10 @@ jobs:
   cli:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Match tag to shared version
         run: test "${GITHUB_REF_NAME#v}" = "$(tr -d '[:space:]' < VERSION)"
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
           architecture: arm64
@@ -54,7 +54,7 @@ jobs:
       - run: |
           test "$(dist/tinytouch --version | tail -n 1)" = "tinyTouch CLI $(tr -d '[:space:]' < VERSION)"
           codesign --verify --strict --verbose=2 dist/tinytouch
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: cli-release
           path: dist/tinytouch
@@ -63,12 +63,12 @@ jobs:
     needs: [firmware, cli]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: firmware-release
           path: dist/release
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: cli-release
           path: dist/cli

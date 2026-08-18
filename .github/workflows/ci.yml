@@ -21,7 +21,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build factory firmware
         run: |
           source /opt/esp/idf/export.sh
@@ -48,7 +48,7 @@ jobs:
                   assert path.stat().st_size == image["size"]
                   assert hashlib.sha256(path.read_bytes()).hexdigest() == image["sha256"]
           PY
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: firmware-release
           path: dist/release
@@ -56,8 +56,8 @@ jobs:
   macos-cli:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
           architecture: arm64
@@ -78,7 +78,7 @@ jobs:
           test "$(dist/tinytouch --version | tail -n 1)" = "tinyTouch CLI $(tr -d '[:space:]' < VERSION)"
           codesign --verify --strict --verbose=2 dist/tinytouch
           file dist/tinytouch | grep -q arm64
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: tinytouch-macos-arm64
           path: dist/tinytouch
@@ -86,7 +86,7 @@ jobs:
   consistency:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Verify release sources
         run: |
           test -s VERSION
