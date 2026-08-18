@@ -48,6 +48,7 @@ class PackagingTests(unittest.TestCase):
                 mock.patch.object(cli, "CLI_INSTALL_PATH", install_path),
                 mock.patch.object(cli.sys, "executable", str(source)),
                 mock.patch.object(cli.Path, "home", return_value=home),
+                mock.patch.dict(cli.os.environ, {"SHELL": "/bin/zsh"}),
             ):
                 cli.install_command_if_needed()
             self.assertEqual(install_path.read_bytes(), source.read_bytes())
