@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Needed for the `X | None` annotations below on Python 3.9, which is still the stock
+# interpreter on current macOS and is what tinytouch builds its venv from.
+from __future__ import annotations
+
 import argparse
 import ctypes
 import hashlib
@@ -21,6 +25,8 @@ PAIRING_SERVICE = "tinyTouch-pairing"
 PREFERRED_SERIAL = "B8F862FB478C"
 STATE_DIR = Path.home() / "Library" / "Application Support" / "tinyTouch"
 MAX_SEEN_NONCES = 256
+# An EV line is ~110 bytes; more than this is not a pending event.
+MAX_EVENT_BYTES = 512
 
 _COMMON_CRYPTO = ctypes.CDLL("/usr/lib/system/libcommonCrypto.dylib")
 _COMMON_CRYPTO.CCCryptorCreateWithMode.argtypes = [
@@ -293,6 +299,24 @@ def handle_event(
     return f"{reply} {reply_mac}\n"
 
 
+def resynchronize_event(line: str, device_id: str = "") -> str:
+    """Recover the trailing event when a truncated one is glued to its front.
+
+    A USB suspend can cut the device's write off mid-event. Those bytes carry no
+    newline, so when the bus resumes they flush together with the next event and
+    arrive as one line: ``EV <partial>EV <nonce> <counter> ...``. That parses as too
+    many fields and is discarded, losing a second real touch on top of the one already
+    lost. Everything before the last event marker is unrecoverable, so drop it and keep
+    the intact event behind it.
+    """
+    marker = line.rfind("EV ")
+    if marker <= 0:
+        return line
+    print(f"{device_id}: discarded truncated event before offset {marker}",
+          file=sys.stderr, flush=True)
+    return line[marker:]
+
+
 def open_serial(port: str) -> serial.Serial:
     ser = serial.Serial()
     ser.port = port
@@ -321,13 +345,24 @@ def serve_port(port: str, once: bool = False) -> None:
     try:
         with open_serial(port) as ser:
             print(f"helper listening on {port} ({device_id})", flush=True)
+            pending = b""
             while True:
                 raw = ser.readline()
                 if not raw:
                     continue
-                line = raw.decode("utf-8", "replace").strip()
+                # readline() returns whatever it has when the read timeout expires, so
+                # an event can arrive in pieces. Verifying a fragment fails the MAC and
+                # silently drops a real touch, so wait for the newline.
+                pending += raw
+                if not pending.endswith(b"\n"):
+                    if len(pending) > MAX_EVENT_BYTES:
+                        pending = b""
+                    continue
+                line = pending.decode("utf-8", "replace").strip()
+                pending = b""
                 if line:
                     print(f"{device_id}: {line}", flush=True)
+                line = resynchronize_event(line, device_id)
                 reply = handle_event(line, password, pairing_key, state, device_id=device_id)
                 if reply:
                     ser.write(reply.encode("ascii"))
