@@ -88,7 +88,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+          release_flags=(--verify-tag --generate-notes)
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            release_flags+=(--prerelease)
+          fi
+          gh release create "$GITHUB_REF_NAME" "${release_flags[@]}"
           gh release upload "$GITHUB_REF_NAME" --clobber \
             dist/release/factory/tiny_touch_factory_full.bin \
             dist/release/recovery/tiny_touch_recovery_full.bin \
