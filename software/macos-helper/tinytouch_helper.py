@@ -245,13 +245,30 @@ def handle_event(
     device_id: str | None = None,
 ) -> str | None:
     parts = line.strip().split()
-    if len(parts) != 6 or parts[0] != "EV":
+    if not parts or parts[0] not in {"EV", "EV2"}:
         return None
-    _, nonce, counter, slot, score, got_mac = parts
+    if parts[0] == "EV":
+        if len(parts) != 6:
+            return None
+        _, nonce, counter, slot, score, got_mac = parts
+        key_id = None
+        mac_material = f"EV|{nonce}|{counter}|{slot}|{score}"
+    else:
+        if len(parts) < 6:
+            return None
+        _, nonce, counter, slot, score, *authenticators = parts
+        key_id = hashlib.sha256(pairing_key).hexdigest()[:16]
+        prefix = f"{key_id}:"
+        match = next((item[len(prefix):] for item in authenticators
+                      if item.lower().startswith(prefix)), None)
+        if match is None:
+            return None
+        got_mac = match
+        mac_material = f"EV2|{key_id}|{nonce}|{counter}|{slot}|{score}"
     if not valid_hex(nonce, 16):
         print("bad event nonce", file=sys.stderr)
         return None
-    expected = mac_hex(pairing_key, f"EV|{nonce}|{counter}|{slot}|{score}")
+    expected = mac_hex(pairing_key, mac_material)
     if not hmac.compare_digest(expected, got_mac.lower()):
         print("bad event mac", file=sys.stderr)
         return None
@@ -261,13 +278,19 @@ def handle_event(
             print("replayed event nonce", file=sys.stderr)
             return None
     iv_hex, ct_hex = encrypt_password(pairing_key, nonce, password)
-    reply_mac = mac_hex(pairing_key, f"PW|{nonce}|{iv_hex}|{ct_hex}")
+    if key_id is None:
+        reply_material = f"PW|{nonce}|{iv_hex}|{ct_hex}"
+        reply = f"PW {nonce} {iv_hex} {ct_hex}"
+    else:
+        reply_material = f"PW2|{key_id}|{nonce}|{iv_hex}|{ct_hex}"
+        reply = f"PW2 {key_id} {nonce} {iv_hex} {ct_hex}"
+    reply_mac = mac_hex(pairing_key, reply_material)
     if state is not None:
         seen_nonces.append(nonce)
         state["seen_nonces"] = seen_nonces[-MAX_SEEN_NONCES:]
         if persist_state:
             save_state(state, device_id)
-    return f"PW {nonce} {iv_hex} {ct_hex} {reply_mac}\n"
+    return f"{reply} {reply_mac}\n"
 
 
 def open_serial(port: str) -> serial.Serial:
@@ -393,6 +416,22 @@ def self_test(device_id: str = PREFERRED_SERIAL) -> None:
     parts = reply.split()
     assert parts[0] == "PW"
     assert hmac.compare_digest(parts[4], mac_hex(pairing_key, f"PW|{parts[1]}|{parts[2]}|{parts[3]}"))
+    key_id = hashlib.sha256(pairing_key).hexdigest()[:16]
+    event_mac = mac_hex(pairing_key, f"EV2|{key_id}|{nonce}|2|1|123")
+    reply = handle_event(
+        f"EV2 {nonce} 2 1 123 deadbeefdeadbeef:{'00' * 32} {key_id}:{event_mac}",
+        password,
+        pairing_key,
+        {"seen_nonces": []},
+        persist_state=False,
+        device_id=device_id,
+    )
+    assert reply is not None
+    parts = reply.split()
+    assert parts[0] == "PW2" and parts[1] == key_id
+    assert hmac.compare_digest(
+        parts[5], mac_hex(pairing_key, f"PW2|{parts[1]}|{parts[2]}|{parts[3]}|{parts[4]}")
+    )
     print("self-test ok")
 
 

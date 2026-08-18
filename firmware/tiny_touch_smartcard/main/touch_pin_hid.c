@@ -147,6 +147,81 @@ static bool decrypt_password(const uint8_t pairing_key[32], const char *expected
   return true;
 }
 
+static bool decrypt_password_v2(const char *expected_nonce, char *response,
+                                uint8_t *password, size_t *password_length) {
+  char *save = NULL;
+  char *kind = strtok_r(response, " ", &save);
+  char *key_id_hex = strtok_r(NULL, " ", &save);
+  char *nonce = strtok_r(NULL, " ", &save);
+  char *iv_hex = strtok_r(NULL, " ", &save);
+  char *ciphertext_hex = strtok_r(NULL, " ", &save);
+  char *mac_hex = strtok_r(NULL, " ", &save);
+  if (!kind || !key_id_hex || !nonce || !iv_hex || !ciphertext_hex || !mac_hex ||
+      strtok_r(NULL, " ", &save) || strcmp(kind, "PW2") != 0 ||
+      strcmp(nonce, expected_nonce) != 0) return false;
+
+  uint8_t key_id[DEVICE_CONFIG_HID_KEY_ID_SIZE];
+  device_hid_host_t host = {0};
+  bool found = false;
+  if (!hex_to_bytes(key_id_hex, key_id, sizeof(key_id))) return false;
+  for (size_t i = 0; i < device_config_hid_host_count(); i++) {
+    if (device_config_get_hid_host(i, &host) &&
+        constant_time_equal(host.id, key_id, sizeof(key_id))) {
+      found = true;
+      break;
+    }
+  }
+  secure_wipe(key_id, sizeof(key_id));
+  if (!found) {
+    secure_wipe(&host, sizeof(host));
+    return false;
+  }
+
+  size_t ciphertext_length = strlen(ciphertext_hex) / 2;
+  uint8_t got_mac[32];
+  uint8_t expected_mac[32];
+  uint8_t iv[16];
+  uint8_t ciphertext[160];
+  uint8_t session_key[32];
+  uint8_t stream_block[16] = {0};
+  char material[544];
+  char session_material[64];
+  bool ok = false;
+  if ((strlen(ciphertext_hex) & 1) || ciphertext_length > *password_length ||
+      !hex_to_bytes(mac_hex, got_mac, sizeof(got_mac)) ||
+      !hex_to_bytes(iv_hex, iv, sizeof(iv)) ||
+      !hex_to_bytes(ciphertext_hex, ciphertext, ciphertext_length) ||
+      snprintf(material, sizeof(material), "PW2|%s|%s|%s|%s", key_id_hex, nonce,
+               iv_hex, ciphertext_hex) >= sizeof(material) ||
+      !hmac_sha256(host.key, material, expected_mac) ||
+      !constant_time_equal(got_mac, expected_mac, sizeof(got_mac))) goto done;
+
+  snprintf(session_material, sizeof(session_material), "SESSION|%s", nonce);
+  if (!hmac_sha256(host.key, session_material, session_key)) goto done;
+  mbedtls_aes_context aes;
+  mbedtls_aes_init(&aes);
+  size_t offset = 0;
+  int result = mbedtls_aes_setkey_enc(&aes, session_key, 256);
+  if (result == 0) {
+    result = mbedtls_aes_crypt_ctr(&aes, ciphertext_length, &offset, iv,
+                                   stream_block, ciphertext, password);
+  }
+  mbedtls_aes_free(&aes);
+  if (result == 0) {
+    *password_length = ciphertext_length;
+    ok = true;
+  }
+
+done:
+  secure_wipe(&host, sizeof(host));
+  secure_wipe(got_mac, sizeof(got_mac));
+  secure_wipe(expected_mac, sizeof(expected_mac));
+  secure_wipe(ciphertext, sizeof(ciphertext));
+  secure_wipe(session_key, sizeof(session_key));
+  secure_wipe(stream_block, sizeof(stream_block));
+  return ok;
+}
+
 static bool request_and_type_password(void) {
   uint8_t pairing_key[32];
   uint8_t nonce_bytes[16];
@@ -154,27 +229,64 @@ static bool request_and_type_password(void) {
   char nonce[33];
   char mac_hex[65];
   char material[128];
-  char event[256];
+  char event[896];
   char response[640];
   uint8_t password[160];
   size_t password_length = sizeof(password);
   bool result = false;
 
-  if (!device_config_get_hid_key(pairing_key)) return false;
+  size_t host_count = device_config_hid_host_count();
+  if (!device_config_get_hid_key(pairing_key) || host_count == 0) return false;
   esp_fill_random(nonce_bytes, sizeof(nonce_bytes));
   bytes_to_hex(nonce_bytes, sizeof(nonce_bytes), nonce);
   event_counter++;
-  snprintf(material, sizeof(material), "EV|%s|%lu|1|1", nonce,
-           (unsigned long)event_counter);
-  if (!hmac_sha256(pairing_key, material, event_mac)) goto done;
-  bytes_to_hex(event_mac, sizeof(event_mac), mac_hex);
-  snprintf(event, sizeof(event), "EV %s %lu 1 1 %s", nonce,
-           (unsigned long)event_counter, mac_hex);
-
   xQueueReset(password_responses);
-  config_console_send_line(event);
-  if (xQueueReceive(password_responses, response, pdMS_TO_TICKS(6000)) != pdTRUE) goto done;
-  if (!decrypt_password(pairing_key, nonce, response, password, &password_length)) goto done;
+  if (host_count == 1) {
+    snprintf(material, sizeof(material), "EV|%s|%lu|1|1", nonce,
+             (unsigned long)event_counter);
+    if (!hmac_sha256(pairing_key, material, event_mac)) goto done;
+    bytes_to_hex(event_mac, sizeof(event_mac), mac_hex);
+    snprintf(event, sizeof(event), "EV %s %lu 1 1 %s", nonce,
+             (unsigned long)event_counter, mac_hex);
+    config_console_send_line(event);
+    if (xQueueReceive(password_responses, response, pdMS_TO_TICKS(6000)) != pdTRUE ||
+        !decrypt_password(pairing_key, nonce, response, password, &password_length)) goto done;
+  } else {
+    int used = snprintf(event, sizeof(event), "EV2 %s %lu 1 1", nonce,
+                        (unsigned long)event_counter);
+    for (size_t i = 0; i < host_count && used > 0 && used < sizeof(event); i++) {
+      device_hid_host_t host;
+      char id_hex[DEVICE_CONFIG_HID_KEY_ID_SIZE * 2 + 1];
+      if (!device_config_get_hid_host(i, &host)) goto done;
+      bytes_to_hex(host.id, sizeof(host.id), id_hex);
+      snprintf(material, sizeof(material), "EV2|%s|%s|%lu|1|1", id_hex, nonce,
+               (unsigned long)event_counter);
+      if (!hmac_sha256(host.key, material, event_mac)) {
+        secure_wipe(&host, sizeof(host));
+        goto done;
+      }
+      bytes_to_hex(event_mac, sizeof(event_mac), mac_hex);
+      used += snprintf(event + used, sizeof(event) - used, " %s:%s", id_hex, mac_hex);
+      secure_wipe(&host, sizeof(host));
+    }
+    if (used <= 0 || used >= sizeof(event)) goto done;
+    config_console_send_line(event);
+    if (xQueueReceive(password_responses, response, pdMS_TO_TICKS(1500)) == pdTRUE &&
+        decrypt_password_v2(nonce, response, password, &password_length)) {
+      result = type_ascii(password, password_length);
+      goto done;
+    }
+    password_length = sizeof(password);
+    snprintf(material, sizeof(material), "EV|%s|%lu|1|1", nonce,
+             (unsigned long)event_counter);
+    if (!hmac_sha256(pairing_key, material, event_mac)) goto done;
+    bytes_to_hex(event_mac, sizeof(event_mac), mac_hex);
+    snprintf(event, sizeof(event), "EV %s %lu 1 1 %s", nonce,
+             (unsigned long)event_counter, mac_hex);
+    config_console_send_line(event);
+    if (xQueueReceive(password_responses, response, pdMS_TO_TICKS(4500)) != pdTRUE ||
+        !decrypt_password(pairing_key, nonce, response, password, &password_length)) goto done;
+  }
   result = type_ascii(password, password_length);
 
 done:
@@ -213,7 +325,9 @@ void touch_pin_hid_start(void) {
 }
 
 bool touch_pin_hid_submit_response(const char *response) {
-  if (!password_responses || strncmp(response, "PW ", 3) != 0 || strlen(response) >= 640) {
+  if (!password_responses ||
+      (strncmp(response, "PW ", 3) != 0 && strncmp(response, "PW2 ", 4) != 0) ||
+      strlen(response) >= 640) {
     return false;
   }
   char queued[640] = {0};

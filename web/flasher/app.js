@@ -1,11 +1,5 @@
 import { ESPLoader, Transport } from "./vendor/esptool-js.js";
 
-const images = [
-  ["Bootloader", "./firmware/bootloader.bin", 0x0, "e0d0bd59a704ca41492582cd997fac0a9e4eb3fd7efbc1583a4658842905c978"],
-  ["Partition table", "./firmware/partition-table.bin", 0x8000, "7f00b6c042a89b15b0cac534f82ed988caf29278ff5700b0c511eb1b5bb7c820"],
-  ["Unified firmware", "./firmware/tiny_touch_smartcard.bin", 0x10000, "d110f8b0e3d4d652b94ae78dbe19111ebec813be15e711eb8cfbc1e50da6bf2c"],
-];
-const totalBytes = 414032;
 const button = document.querySelector("#flash");
 const message = document.querySelector("#message");
 const browserNote = document.querySelector("#browser-note");
@@ -38,15 +32,20 @@ async function sha256(data) {
 }
 
 async function loadFirmware() {
+  const manifestResponse = await fetch("./manifest.json", { cache: "no-store" });
+  if (!manifestResponse.ok) throw new Error("Firmware manifest could not be downloaded.");
+  const manifest = await manifestResponse.json();
   const loaded = [];
-  for (const [name, url, address, expected] of images) {
-    const response = await fetch(url, { cache: "no-store" });
+  for (const image of manifest.images) {
+    const response = await fetch(`./firmware/${image.file}`, { cache: "no-store" });
+    const { name, address, sha256: expected, size } = image;
     if (!response.ok) throw new Error(`${name} could not be downloaded.`);
     const buffer = await response.arrayBuffer();
+    if (buffer.byteLength !== size) throw new Error(`${name} has the wrong file size.`);
     if (await sha256(buffer) !== expected) throw new Error(`${name} failed its integrity check.`);
     loaded.push({ data: new Uint8Array(buffer), address });
   }
-  return loaded;
+  return { files: loaded, manifest };
 }
 
 function friendlyError(error) {
@@ -70,19 +69,23 @@ button.addEventListener("click", async () => {
   show("Choose the ESP32-S3 serial port in the browser window.");
   try {
     const port = await navigator.serial.requestPort();
+    const { usbVendorId, usbProductId } = port.getInfo();
+    const nativeDownloadMode = usbVendorId === 0x303a && [0x0009, 0x1001].includes(usbProductId);
     transport = new Transport(port, false);
     const terminal = { clean(){ log.textContent = ""; }, write:writeLog, writeLine:writeLog };
     const loader = new ESPLoader({ transport, baudrate:460800, terminal, debugLogging:false });
     show("Connecting to ESP32-S3…");
-    const chip = await loader.main();
+    const chip = await loader.main(nativeDownloadMode ? "no_reset" : "default_reset");
     if (!/ESP32-S3/i.test(chip)) throw new Error(`This is ${chip}, not an ESP32-S3.`);
 
     stage.textContent = "Checking firmware";
-    const fileArray = await loadFirmware();
+    const { files: fileArray, manifest } = await loadFirmware();
+    const totalBytes = manifest.images.reduce((sum, image) => sum + image.size, 0);
     stage.textContent = "Writing firmware";
     const written = [0, 0, 0];
     await loader.writeFlash({
-      fileArray, flashMode:"dio", flashFreq:"80m", flashSize:"4MB", eraseAll:false, compress:true,
+      fileArray, flashMode:"dio", flashFreq:"80m", flashSize:manifest.flashSize,
+      eraseAll:manifest.eraseAll, compress:manifest.compress,
       reportProgress(index, amount) {
         written[index] = amount;
         const value = Math.min(100, Math.round(written.reduce((sum, item) => sum + item, 0) / totalBytes * 100));

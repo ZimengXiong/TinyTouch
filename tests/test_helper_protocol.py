@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 import unittest
 from pathlib import Path
 
@@ -55,6 +56,41 @@ class HelperProtocolTests(unittest.TestCase):
             b"password",
             key,
             state,
+            persist_state=False,
+        )
+        self.assertIsNone(response)
+
+    def test_v2_event_selects_this_computers_independent_key(self):
+        key = bytes(range(32))
+        password = b"a different Mac password"
+        nonce = "03" * 16
+        key_id = hashlib.sha256(key).hexdigest()[:16]
+        event_mac = helper.mac_hex(key, f"EV2|{key_id}|{nonce}|8|1|77")
+        response = helper.handle_event(
+            f"EV2 {nonce} 8 1 77 deadbeefdeadbeef:{'00' * 32} {key_id}:{event_mac}",
+            password,
+            key,
+            {"seen_nonces": []},
+            persist_state=False,
+        )
+        self.assertIsNotNone(response)
+        kind, got_id, got_nonce, iv_hex, ciphertext_hex, response_mac = response.split()
+        self.assertEqual((kind, got_id, got_nonce), ("PW2", key_id, nonce))
+        self.assertEqual(
+            response_mac,
+            helper.mac_hex(key, f"PW2|{key_id}|{nonce}|{iv_hex}|{ciphertext_hex}"),
+        )
+        plaintext = helper.aes_ctr_crypt(
+            helper.session_key(key, nonce), bytes.fromhex(iv_hex), bytes.fromhex(ciphertext_hex)
+        )
+        self.assertEqual(plaintext, password)
+
+    def test_v2_event_for_another_computer_is_ignored(self):
+        response = helper.handle_event(
+            f"EV2 {'04' * 16} 1 1 1 deadbeefdeadbeef:{'00' * 32}",
+            b"password",
+            bytes(range(32)),
+            {"seen_nonces": []},
             persist_state=False,
         )
         self.assertIsNone(response)
