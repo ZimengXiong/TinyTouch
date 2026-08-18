@@ -5,7 +5,7 @@ project_dir="${0:A:h:h}"
 build_dir="$project_dir/build/distribution"
 dist_dir="$project_dir/dist"
 venv_python="$project_dir/.venv/bin/python"
-version="${TINYTOUCH_VERSION:-0.3.1-preprod}"
+version="${TINYTOUCH_VERSION:-$(tr -d '[:space:]' < "$project_dir/VERSION")}"
 output="$dist_dir/tinytouch"
 signing_identity="${TINYTOUCH_SIGNING_IDENTITY:-}"
 
@@ -31,6 +31,7 @@ mkdir -p "$build_dir" "$dist_dir"
   --paths "$project_dir/software/macos-helper" \
   --hidden-import tinytouch_helper \
   --hidden-import serial.tools.list_ports \
+  --add-data "$project_dir/VERSION:." \
   "$project_dir/tinytouch"
 
 if [[ -z "$signing_identity" ]]; then
@@ -40,8 +41,7 @@ if [[ -z "$signing_identity" ]]; then
   signing_identity="$(security find-identity -v -p codesigning | sed -n 's/.*"\(Apple Development:[^"]*\)".*/\1/p' | head -n 1)"
 fi
 if [[ -z "$signing_identity" ]]; then
-  print -u2 "No usable code-signing identity was found."
-  exit 1
+  signing_identity="-"
 fi
 
 executable="$build_dir/bin/tinytouch"

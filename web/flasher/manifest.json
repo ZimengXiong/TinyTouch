@@ -1,0 +1,35 @@
+{
+  "version": "0.4.0-preprod",
+  "protocol": 2,
+  "flashSize": "4MB",
+  "eraseAll": false,
+  "compress": false,
+  "images": [
+    {
+      "name": "Bootloader",
+      "file": "bootloader.bin",
+      "address": 0,
+      "size": 21504,
+      "sha256": "41bec2299cb9af40dab670125f9420c4c647af8b7610cba914bf3067c1ee4d7c"
+    },
+    {
+      "name": "Partition table",
+      "file": "partition-table.bin",
+      "address": 32768,
+      "size": 3072,
+      "sha256": "7f00b6c042a89b15b0cac534f82ed988caf29278ff5700b0c511eb1b5bb7c820"
+    },
+    {
+      "name": "Unified firmware",
+      "file": "tiny_touch_smartcard.bin",
+      "address": 65536,
+      "size": 392688,
+      "sha256": "431f11d6ea92233d71e01effc7235e6d823cea43b5fc0a599cf83e759b77af0d"
+    }
+  ],
+  "fullImage": {
+    "file": "tiny_touch_factory_full.bin",
+    "size": 458224,
+    "sha256": "dcabd42f7e0014227c56d820240e3722406e6ae88d462ad9936a6b1cd2a69199"
+  }
+}

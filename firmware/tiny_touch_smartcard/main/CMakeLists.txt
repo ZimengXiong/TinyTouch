@@ -15,3 +15,9 @@ idf_component_register(
 if(TINYTOUCH_RECOVERY_BUILD)
   target_compile_definitions(${COMPONENT_LIB} PRIVATE TINYTOUCH_RECOVERY_BUILD=1)
 endif()
+
+target_compile_definitions(
+  ${COMPONENT_LIB} PRIVATE
+  TINYTOUCH_FIRMWARE_VERSION="${TINYTOUCH_VERSION}"
+  TINYTOUCH_PROTOCOL_VERSION=2
+)

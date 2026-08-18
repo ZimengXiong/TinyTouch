@@ -8,6 +8,7 @@ import base64
 import filecmp
 import getpass
 import glob
+import hashlib
 import os
 import plistlib
 import re
@@ -24,6 +25,9 @@ from pathlib import Path
 
 FROZEN = bool(getattr(sys, "frozen", False))
 ROOT = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent
+BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", ROOT))
+VERSION_FILE = BUNDLE_ROOT / "VERSION"
+CLI_VERSION = VERSION_FILE.read_text(encoding="utf-8").strip() if VERSION_FILE.exists() else "development"
 PIV_PROJECT = ROOT / "firmware" / "tiny_touch_smartcard"
 HELPER = ROOT / "software" / "macos-helper" / "tinytouch_helper.py"
 REQUIREMENTS = ROOT / "software" / "macos-helper" / "requirements.txt"
@@ -155,6 +159,14 @@ def human_device_error(line: str) -> str:
         "ERR HID_KEY": (
             "The ESP32-S3 could not store the HID pairing key in NVS. "
             "Run 'tinytouch status --verbose'; factory-reset the device if NVS remains unavailable."
+        ),
+        "ERR HID_KEY_ADD": (
+            "The device could not add this Mac's HID key. Its computer list may be full, or "
+            "NVS storage may be unavailable. Run 'tinytouch computers list' and try again."
+        ),
+        "ERR HID_KEY_REMOVE": (
+            "That HID computer ID was not found, or the updated list could not be saved. "
+            "Run 'tinytouch computers list' and use the exact ID shown."
         ),
         "ERR PROVISION_COMMIT": (
             "The ESP32-S3 could not validate or save the generated PIV identity. "
@@ -422,6 +434,17 @@ def keychain_exists(service: str, account: str) -> bool:
         stderr=subprocess.DEVNULL,
     )
     return result.returncode == 0
+
+
+def keychain_get(service: str, account: str) -> str | None:
+    result = subprocess.run(
+        ["security", "find-generic-password", "-a", account, "-s", service, "-w"],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    return result.stdout.strip() if result.returncode == 0 else None
 
 
 def pairing_account_for_port(port: str | None) -> str:
@@ -740,6 +763,29 @@ def provision_hid_key(port: str, key: bytes) -> None:
     say("  ✓ A unique HID pairing key is stored on tinyTouch.")
 
 
+def hid_key_id(key: bytes) -> str:
+    return hashlib.sha256(key).hexdigest()[:16]
+
+
+def hid_key_ids(port: str) -> tuple[set[str], int]:
+    lines = serial_command(port, "HID_KEY_IDS", timeout=3)
+    line = next((item for item in lines if item.startswith("OK HID_KEY_IDS ")), "")
+    fields = dict(re.findall(r"([A-Za-z_]+)=([^ ]+)", line))
+    ids = set() if fields.get("ids") in {None, "none"} else set(fields["ids"].split(","))
+    try:
+        capacity = int(fields.get("capacity", "0"))
+    except ValueError:
+        capacity = 0
+    return ids, capacity
+
+
+def firmware_protocol(status: dict[str, str]) -> int:
+    try:
+        return int(status.get("protocol", "1"))
+    except ValueError:
+        return 1
+
+
 def pair_piv(requested_identity: str | None = None, port: str | None = None) -> None:
     say("Waiting for macOS to discover tinyTouch's smart-card identity...")
     output = ""
@@ -890,24 +936,43 @@ def configure_hid_credentials(port: str, status: dict[str, str]) -> None:
     python = ensure_helper_environment()
     account = pairing_account_for_port(port)
     device_has_key = status.get("hid_key") == "configured"
-    local_has_key = keychain_exists(PAIRING_SERVICE, account)
+    local_key_hex = keychain_get(PAIRING_SERVICE, account)
+    try:
+        local_key = bytes.fromhex(local_key_hex) if local_key_hex else None
+    except ValueError:
+        local_key = None
+    if local_key is not None and len(local_key) != 32:
+        local_key = None
     local_has_password = keychain_exists(PASSWORD_SERVICE, account)
 
-    if device_has_key and not local_has_key:
-        say("This tinyTouch already has an HID key, but this Mac does not have the matching key.")
-        answer = ask(
-            "Replace the device key and configure HID for this Mac? This disconnects any "
-            "previous HID helper. [y/N]: ",
-            noninteractive_hint="HID re-keying requires confirmation in an interactive Terminal.",
-        ).strip().lower()
-        if answer not in {"y", "yes"}:
-            raise ToolError("HID setup cancelled; the existing device key was preserved.")
-
-    if not device_has_key or not local_has_key:
-        key = secrets.token_bytes(32)
-        provision_hid_key(port, key)
-        keychain_set(PAIRING_SERVICE, account, key.hex())
-        say("  ✓ Matching HID key stored in this Mac user's Keychain.")
+    if firmware_protocol(status) >= 2:
+        registered_ids, capacity = hid_key_ids(port)
+        if local_key is None:
+            local_key = secrets.token_bytes(32)
+        local_id = hid_key_id(local_key)
+        if local_id not in registered_ids:
+            if capacity and len(registered_ids) >= capacity:
+                raise ToolError(
+                    f"This tinyTouch already trusts {capacity} HID computers. Remove an old "
+                    "computer with 'tinytouch computers remove HID_ID', then try again."
+                )
+            serial_command(port, f"HID_KEY_ADD {local_id} {local_key.hex()}", timeout=3)
+            say(f"  ✓ This Mac was added as HID computer {local_id}.")
+        else:
+            say(f"  ✓ This Mac is already trusted for HID ({local_id}).")
+        keychain_set(PAIRING_SERVICE, account, local_key.hex())
+    else:
+        if device_has_key and local_key is None:
+            raise ToolError(
+                "This device uses older single-computer HID firmware, and its existing key "
+                "belongs to another Mac. Update the firmware before adding this Mac; the "
+                "update preserves the existing key."
+            )
+        if not device_has_key:
+            local_key = local_key or secrets.token_bytes(32)
+            provision_hid_key(port, local_key)
+            keychain_set(PAIRING_SERVICE, account, local_key.hex())
+            say("  ✓ Matching HID key stored in this Mac user's Keychain.")
 
     if not local_has_password:
         password = prompt_password()
@@ -931,11 +996,17 @@ def configure_unified_device(
     local_hid_ready = False
     if mode == "hid":
         account = pairing_account_for_port(port)
-        local_hid_ready = (
-            status.get("hid_key") == "configured"
-            and keychain_exists(PAIRING_SERVICE, account)
-            and keychain_exists(PASSWORD_SERVICE, account)
-        )
+        local_hid_ready = False
+        local_key_hex = keychain_get(PAIRING_SERVICE, account)
+        if local_key_hex and keychain_exists(PASSWORD_SERVICE, account):
+            if firmware_protocol(status) >= 2:
+                try:
+                    registered_ids, _ = hid_key_ids(port)
+                    local_hid_ready = hid_key_id(bytes.fromhex(local_key_hex)) in registered_ids
+                except (ToolError, ValueError):
+                    local_hid_ready = False
+            else:
+                local_hid_ready = status.get("hid_key") == "configured"
 
     changes_needed = (
         status.get("keys") != "nvs"
@@ -972,7 +1043,6 @@ def configure_unified_device(
         serial_command(port, f"MODE {mode}", timeout=3)
         say(f"  ✓ {mode.upper()} mode enabled.")
     if mode == "piv" and not args.no_pair:
-        remove_helper()
         pair_piv(port=port)
     elif mode == "piv":
         say("macOS smart-card pairing was skipped as requested.")
@@ -1020,10 +1090,79 @@ def command_mode(args: argparse.Namespace) -> None:
     configure_unified_device(args, args.mode, port, status, first_step=1, total_steps=3)
 
 
+def command_add_computer(args: argparse.Namespace) -> None:
+    require_macos()
+    say("Add this Mac to tinyTouch")
+    step(1, 4, "Connect tinyTouch")
+    port = choose_port(args.port)
+    status = status_fields(port)
+    require_unified_firmware(status)
+    require_fingerprint_sensor(status)
+    step(2, 4, "Authorize this Mac")
+    unlock_configuration(port)
+    if status.get("keys") != "nvs":
+        port = provision_piv_keys(port, generate_piv_bundle())
+        status = status_fields(port)
+    configure_hid_credentials(port, status)
+    try:
+        fingerprint_count = int(status.get("fingerprints", "0"))
+    except ValueError:
+        fingerprint_count = 0
+    step(3, 4, "Check fingerprint")
+    if fingerprint_count == 0:
+        say("Enroll your first fingerprint.")
+        serial_command(port, "ENROLL 1", timeout=45)
+        say("  ✓ Fingerprint enrolled in slot 1.")
+    else:
+        say(f"  ✓ Preserving {fingerprint_count} enrolled fingerprint(s).")
+    step(4, 4, "Pair PIV with this Mac")
+    pair_piv(port=port)
+    say()
+    say(f"This Mac is ready for PIV and HID. Active device mode remains {status['mode'].upper()}.")
+
+
+def command_computers(args: argparse.Namespace) -> None:
+    port = choose_port(args.port)
+    status = status_fields(port)
+    require_unified_firmware(status)
+    if firmware_protocol(status) < 2:
+        raise ToolError("Update tinyTouch firmware to manage more than one HID computer.")
+    registered_ids, capacity = hid_key_ids(port)
+    account = pairing_account_for_port(port)
+    local_key_hex = keychain_get(PAIRING_SERVICE, account)
+    local_id = None
+    if local_key_hex:
+        try:
+            local_id = hid_key_id(bytes.fromhex(local_key_hex))
+        except ValueError:
+            pass
+    if args.action == "list":
+        say(f"HID computers ({len(registered_ids)} of {capacity}):")
+        if not registered_ids:
+            say("  none")
+        for host_id in sorted(registered_ids):
+            say(f"  {host_id}" + ("  this Mac" if host_id == local_id else ""))
+        say("PIV can be paired independently on each Mac with 'tinytouch pair'.")
+        return
+    if not args.host_id:
+        raise ToolError("Specify the HID computer ID to remove. Run 'tinytouch computers list' first.")
+    host_id = args.host_id.lower()
+    if not re.fullmatch(r"[0-9a-f]{16}", host_id):
+        raise ToolError("HID computer ID must be the 16-character ID shown by 'tinytouch computers list'.")
+    if host_id not in registered_ids:
+        raise ToolError(f"HID computer {host_id} is not registered on this tinyTouch.")
+    unlock_configuration(port)
+    serial_command(port, f"HID_KEY_REMOVE {host_id}", timeout=3)
+    if host_id == local_id:
+        keychain_delete(PAIRING_SERVICE, account)
+    say(f"Removed HID computer {host_id}.")
+
+
 def command_status(args: argparse.Namespace) -> None:
     ports = detect_ports()
     say("tinyTouch status")
     say()
+    say(f"CLI: {CLI_VERSION}")
     if not ports and not args.port:
         say("Device: not detected")
         say("Connect tinyTouch with a USB data cable, then run this command again.")
@@ -1049,7 +1188,9 @@ def command_status(args: argparse.Namespace) -> None:
             else:
                 firmware_label = "incompatible"
             sensor_ready = fields.get("sensor") == "ok"
-            say(f"Firmware: {firmware_label}")
+            version = fields.get("firmware_version", "legacy/unversioned")
+            protocol = fields.get("protocol", "1")
+            say(f"Firmware: {firmware_label} ({version}, protocol {protocol})")
             say(f"Current mode: {fields.get('mode', 'unknown').upper()}")
             say(f"Fingerprint sensor: {'ready' if sensor_ready else 'not responding'}")
             say(f"Enrolled fingerprints: {fields.get('fingerprints', 'unknown')}")
@@ -1061,6 +1202,8 @@ def command_status(args: argparse.Namespace) -> None:
                 "HID pairing: "
                 + ("configured" if fields.get("hid_key") == "configured" else "not configured yet")
             )
+            if "hid_hosts" in fields:
+                say(f"HID computers: {fields['hid_hosts']} of 8")
             if not sensor_ready:
                 say("Action: check sensor power and UART wiring (TX to GPIO44, RX to GPIO43).")
             if fields.get("firmware") != "unified":
@@ -1238,6 +1381,7 @@ def command_logs(args: argparse.Namespace) -> None:
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(prog="tinytouch", description=__doc__)
+    result.add_argument("--version", action="version", version=f"tinyTouch CLI {CLI_VERSION}")
     result.add_argument(
         "--verbose", action="store_true",
         help="show shell commands, serial protocol messages, and diagnostic details",
@@ -1265,6 +1409,20 @@ def parser() -> argparse.ArgumentParser:
     mode.add_argument("--skip-enroll", action="store_true", help="do not enroll a missing fingerprint")
     mode.add_argument("--no-pair", action="store_true", help="do not pair PIV with macOS")
     mode.set_defaults(func=command_mode)
+
+    add_computer = sub.add_parser(
+        "add-computer", help="configure this Mac for both PIV and HID without replacing other Macs"
+    )
+    add_verbose_option(add_computer)
+    add_computer.add_argument("--port", help="use a specific /dev/cu.* device")
+    add_computer.set_defaults(func=command_add_computer)
+
+    computers = sub.add_parser("computers", help="list or remove trusted HID computers")
+    add_verbose_option(computers)
+    computers.add_argument("action", choices=("list", "remove"))
+    computers.add_argument("host_id", nargs="?", help="ID shown by 'tinytouch computers list'")
+    computers.add_argument("--port", help="use a specific /dev/cu.* device")
+    computers.set_defaults(func=command_computers)
 
     status = sub.add_parser("status", help="show device and host status")
     add_verbose_option(status)
@@ -1339,7 +1497,7 @@ def main() -> int:
     args = parser().parse_args()
     VERBOSE = args.verbose
     device_commands = {
-        "setup", "mode", "status", "test", "enroll", "pair", "keys",
+        "setup", "mode", "add-computer", "computers", "status", "test", "enroll", "pair", "keys",
         "factory-reset", "delete", "bootloader",
     }
     helper_was_loaded = False

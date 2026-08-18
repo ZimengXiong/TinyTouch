@@ -1,0 +1,99 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    container: espressif/idf:release-v5.3
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Match tag to shared version
+        shell: bash
+        run: test "${GITHUB_REF_NAME#v}" = "$(tr -d '[:space:]' < VERSION)"
+      - run: |
+          source /opt/esp/idf/export.sh
+          idf.py -C firmware/tiny_touch_smartcard build
+      - run: |
+          source /opt/esp/idf/export.sh
+          idf.py -C firmware/tiny_touch_smartcard -B firmware/tiny_touch_smartcard/build-recovery -D TINYTOUCH_RECOVERY_BUILD=ON build
+      - name: Assemble firmware release
+        run: |
+          source /opt/esp/idf/export.sh
+          python packaging/assemble-release.py \
+            --firmware-build firmware/tiny_touch_smartcard/build \
+            --recovery-build firmware/tiny_touch_smartcard/build-recovery
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-release
+          path: dist/release
+
+  cli:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Match tag to shared version
+        run: test "${GITHUB_REF_NAME#v}" = "$(tr -d '[:space:]' < VERSION)"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          architecture: arm64
+      - name: Build and ad-hoc sign executable
+        env:
+          TINYTOUCH_SIGNING_IDENTITY: "-"
+        run: packaging/build-standalone-macos.sh
+      - run: |
+          test "$(dist/tinytouch --version | tail -n 1)" = "tinyTouch CLI $(tr -d '[:space:]' < VERSION)"
+          codesign --verify --strict --verbose=2 dist/tinytouch
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-release
+          path: dist/tinytouch
+
+  publish:
+    needs: [firmware, cli]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware-release
+          path: dist/release
+      - uses: actions/download-artifact@v4
+        with:
+          name: cli-release
+          path: dist/cli
+      - name: Finalize unified release
+        run: |
+          python3 packaging/attach-cli.py dist/release dist/cli/tinytouch
+          mkdir -p dist/site/flasher/firmware dist/site/recovery/firmware
+          cp -R web/flasher/index.html web/flasher/styles.css web/flasher/app.js web/flasher/vendor dist/site/flasher/
+          cp -R web/recovery/index.html web/recovery/styles.css web/recovery/app.js web/recovery/vendor dist/site/recovery/
+          cp dist/release/factory/manifest.json dist/site/flasher/manifest.json
+          cp dist/release/factory/*.bin dist/site/flasher/firmware/
+          cp dist/release/recovery/manifest.json dist/site/recovery/manifest.json
+          cp dist/release/recovery/*.bin dist/site/recovery/firmware/
+          tar -C dist/site -czf dist/release/tinytouch-web-flashers.tar.gz .
+          tar -C dist/release -czf dist/release/tinytouch-firmware.tar.gz factory recovery release-manifest.json checksums.txt
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+          gh release upload "$GITHUB_REF_NAME" --clobber \
+            dist/release/factory/tiny_touch_factory_full.bin \
+            dist/release/recovery/tiny_touch_recovery_full.bin \
+            dist/release/release-manifest.json \
+            dist/release/checksums.txt \
+            dist/release/tinytouch-macos-arm64 \
+            dist/release/tinytouch-firmware.tar.gz \
+            dist/release/tinytouch-web-flashers.tar.gz

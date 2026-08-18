@@ -1,0 +1,35 @@
+{
+  "version": "0.4.0-preprod",
+  "protocol": 2,
+  "flashSize": "4MB",
+  "eraseAll": true,
+  "compress": false,
+  "images": [
+    {
+      "name": "Bootloader",
+      "file": "bootloader.bin",
+      "address": 0,
+      "size": 21504,
+      "sha256": "428949ea55c59d51dd079c57ca90d0b9487bd30e5970b9ed51cd5a2ce713bd96"
+    },
+    {
+      "name": "Partition table",
+      "file": "partition-table.bin",
+      "address": 32768,
+      "size": 3072,
+      "sha256": "7f00b6c042a89b15b0cac534f82ed988caf29278ff5700b0c511eb1b5bb7c820"
+    },
+    {
+      "name": "Recovery firmware",
+      "file": "tiny_touch_recovery.bin",
+      "address": 65536,
+      "size": 393792,
+      "sha256": "b77b4f0ea345a98621c9abe7d4baeac7913a335f924d4947bd9ccee1ea21c8b4"
+    }
+  ],
+  "fullImage": {
+    "file": "tiny_touch_recovery_full.bin",
+    "size": 459328,
+    "sha256": "062654b5fedeeae8a923ca62e345eb557445118fbc5a62baef74634fbfe86677"
+  }
+}

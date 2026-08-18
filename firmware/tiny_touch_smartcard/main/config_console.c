@@ -20,6 +20,13 @@
 #include "soc/soc.h"
 #include "tusb.h"
 
+#ifndef TINYTOUCH_FIRMWARE_VERSION
+#define TINYTOUCH_FIRMWARE_VERSION "development"
+#endif
+#ifndef TINYTOUCH_PROTOCOL_VERSION
+#define TINYTOUCH_PROTOCOL_VERSION 1
+#endif
+
 static char command[640];
 static size_t command_len;
 static SemaphoreHandle_t cdc_write_mutex;
@@ -79,15 +86,28 @@ static int hex_value(char value) {
   return -1;
 }
 
-static bool decode_hid_key(const char *hex, uint8_t key[32]) {
-  if (strlen(hex) != 64) return false;
-  for (size_t i = 0; i < 32; i++) {
+static bool decode_hex(const char *hex, uint8_t *output, size_t output_length) {
+  if (strlen(hex) != output_length * 2) return false;
+  for (size_t i = 0; i < output_length; i++) {
     int high = hex_value(hex[i * 2]);
     int low = hex_value(hex[i * 2 + 1]);
     if (high < 0 || low < 0) return false;
-    key[i] = (uint8_t)((high << 4) | low);
+    output[i] = (uint8_t)((high << 4) | low);
   }
   return true;
+}
+
+static bool decode_hid_key(const char *hex, uint8_t key[32]) {
+  return decode_hex(hex, key, 32);
+}
+
+static void bytes_to_hex(const uint8_t *data, size_t length, char *output) {
+  static const char digits[] = "0123456789abcdef";
+  for (size_t i = 0; i < length; i++) {
+    output[i * 2] = digits[data[i] >> 4];
+    output[i * 2 + 1] = digits[data[i] & 0x0f];
+  }
+  output[length * 2] = '\0';
 }
 
 static void enrollment_prompt(const char *message) {
@@ -176,21 +196,29 @@ static void handle_command(void) {
     int count = fingerprint_count();
     if (count < 0) {
       snprintf(line, sizeof(line),
-               "OK STATUS firmware=unified mode=%s sensor=no_response fingerprints=unknown "
-               "keys=%s hid_key=%s",
+               "OK STATUS firmware=unified firmware_version=%s protocol=%d mode=%s "
+               "sensor=no_response fingerprints=unknown keys=%s hid_key=%s hid_hosts=%u",
+               TINYTOUCH_FIRMWARE_VERSION, TINYTOUCH_PROTOCOL_VERSION,
                device_config_mode_name(),
                piv_uses_provisioned_keys() ? "nvs" : "unconfigured",
-               device_config_hid_key_configured() ? "configured" : "unconfigured");
+               device_config_hid_key_configured() ? "configured" : "unconfigured",
+               (unsigned)device_config_hid_host_count());
       send_line(line);
     } else {
       snprintf(line, sizeof(line),
-               "OK STATUS firmware=unified mode=%s sensor=ok fingerprints=%d "
-               "keys=%s hid_key=%s",
+               "OK STATUS firmware=unified firmware_version=%s protocol=%d mode=%s "
+               "sensor=ok fingerprints=%d keys=%s hid_key=%s hid_hosts=%u",
+               TINYTOUCH_FIRMWARE_VERSION, TINYTOUCH_PROTOCOL_VERSION,
                device_config_mode_name(), count,
                piv_uses_provisioned_keys() ? "nvs" : "unconfigured",
-               device_config_hid_key_configured() ? "configured" : "unconfigured");
+               device_config_hid_key_configured() ? "configured" : "unconfigured",
+               (unsigned)device_config_hid_host_count());
       send_line(line);
     }
+  } else if (strcmp(command, "VERSION") == 0) {
+    snprintf(line, sizeof(line), "OK VERSION firmware=%s protocol=%d",
+             TINYTOUCH_FIRMWARE_VERSION, TINYTOUCH_PROTOCOL_VERSION);
+    send_line(line);
   } else if (strcmp(command, "CONFIG_UNLOCK") == 0) {
     int count = fingerprint_count();
     if (count < 0) {
@@ -223,6 +251,42 @@ static void handle_command(void) {
     bool ok = decode_hid_key(command + 8, key) && device_config_set_hid_key(key);
     memset(key, 0, sizeof(key));
     send_line(ok ? "OK HID_KEY" : "ERR HID_KEY");
+  } else if (strcmp(command, "HID_KEY_IDS") == 0) {
+    char ids[DEVICE_CONFIG_MAX_HID_HOSTS * 17 + 1] = {0};
+    size_t offset = 0;
+    for (size_t i = 0; i < device_config_hid_host_count(); i++) {
+      device_hid_host_t host;
+      if (!device_config_get_hid_host(i, &host)) continue;
+      if (offset) ids[offset++] = ',';
+      bytes_to_hex(host.id, sizeof(host.id), ids + offset);
+      offset += sizeof(host.id) * 2;
+      memset(&host, 0, sizeof(host));
+    }
+    snprintf(line, sizeof(line), "OK HID_KEY_IDS ids=%s capacity=%d",
+             offset ? ids : "none", DEVICE_CONFIG_MAX_HID_HOSTS);
+    send_line(line);
+  } else if (strncmp(command, "HID_KEY_ADD ", 12) == 0) {
+    if (!require_config_authorization()) return;
+    char *id_hex = command + 12;
+    char *key_hex = strchr(id_hex, ' ');
+    uint8_t id[DEVICE_CONFIG_HID_KEY_ID_SIZE];
+    uint8_t key[32];
+    bool ok = key_hex != NULL;
+    if (ok) {
+      *key_hex++ = '\0';
+      ok = decode_hex(id_hex, id, sizeof(id)) && decode_hid_key(key_hex, key) &&
+           device_config_add_hid_host(id, key);
+    }
+    memset(id, 0, sizeof(id));
+    memset(key, 0, sizeof(key));
+    send_line(ok ? "OK HID_KEY_ADD" : "ERR HID_KEY_ADD");
+  } else if (strncmp(command, "HID_KEY_REMOVE ", 15) == 0) {
+    if (!require_config_authorization()) return;
+    uint8_t id[DEVICE_CONFIG_HID_KEY_ID_SIZE];
+    bool ok = decode_hex(command + 15, id, sizeof(id)) &&
+              device_config_remove_hid_host(id);
+    memset(id, 0, sizeof(id));
+    send_line(ok ? "OK HID_KEY_REMOVE" : "ERR HID_KEY_REMOVE");
   } else if (strncmp(command, "ENROLL ", 7) == 0) {
     if (!require_config_authorization()) return;
     unsigned long slot = strtoul(command + 7, NULL, 10);
@@ -294,7 +358,7 @@ static void console_task(void *arg) {
       if (c == '\n') {
         command[command_len] = '\0';
         if (command_len) {
-          if (strncmp(command, "PW ", 3) == 0) {
+          if (strncmp(command, "PW ", 3) == 0 || strncmp(command, "PW2 ", 4) == 0) {
             touch_pin_hid_submit_response(command);
           } else {
             handle_command();

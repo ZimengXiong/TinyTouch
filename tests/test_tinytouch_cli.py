@@ -15,6 +15,9 @@ loader.exec_module(cli)
 
 
 class PackagingTests(unittest.TestCase):
+    def test_version_comes_from_shared_version_file(self):
+        self.assertEqual(cli.CLI_VERSION, (ROOT / "VERSION").read_text().strip())
+
     def test_launch_agent_uses_current_repository(self):
         python = Path("/tmp/example-python")
         payload = plistlib.loads(cli.launch_agent_contents(python))
@@ -45,6 +48,7 @@ class PackagingTests(unittest.TestCase):
                 mock.patch.object(cli, "CLI_INSTALL_PATH", install_path),
                 mock.patch.object(cli.sys, "executable", str(source)),
                 mock.patch.object(cli.Path, "home", return_value=home),
+                mock.patch.dict(cli.os.environ, {"SHELL": "/bin/zsh"}),
             ):
                 cli.install_command_if_needed()
             self.assertEqual(install_path.read_bytes(), source.read_bytes())
@@ -123,6 +127,40 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("fingerprint sensor detail", message)
         self.assertNotIn("factory firmware was not detected", message.lower())
 
+    def test_protocol_two_adds_this_mac_without_replacing_existing_mac(self):
+        key = bytes(range(32))
+        commands = []
+        with (
+            mock.patch.object(cli, "ensure_helper_environment", return_value=Path("/tmp/python")),
+            mock.patch.object(cli, "pairing_account_for_port", return_value="DEVICE"),
+            mock.patch.object(cli, "keychain_get", return_value=None),
+            mock.patch.object(cli, "keychain_exists", return_value=False),
+            mock.patch.object(cli, "hid_key_ids", return_value=({"aaaaaaaaaaaaaaaa"}, 8)),
+            mock.patch.object(cli.secrets, "token_bytes", return_value=key),
+            mock.patch.object(cli, "serial_command", side_effect=lambda _p, command, **_k: commands.append(command) or ["OK"]),
+            mock.patch.object(cli, "prompt_password", return_value="password"),
+            mock.patch.object(cli, "keychain_set"),
+            mock.patch.object(cli, "install_helper"),
+        ):
+            cli.configure_hid_credentials(
+                "/dev/cu.example", {"protocol": "2", "hid_key": "configured"}
+            )
+        self.assertIn(f"HID_KEY_ADD {cli.hid_key_id(key)} {key.hex()}", commands)
+        self.assertFalse(any(command.startswith("HID_KEY ") for command in commands))
+
+    def test_legacy_hid_firmware_never_rekeys_another_mac_implicitly(self):
+        with (
+            mock.patch.object(cli, "ensure_helper_environment", return_value=Path("/tmp/python")),
+            mock.patch.object(cli, "pairing_account_for_port", return_value="DEVICE"),
+            mock.patch.object(cli, "keychain_get", return_value=None),
+            mock.patch.object(cli, "keychain_exists", return_value=False),
+        ):
+            with self.assertRaises(cli.ToolError) as context:
+                cli.configure_hid_credentials(
+                    "/dev/cu.example", {"protocol": "1", "hid_key": "configured"}
+                )
+        self.assertIn("preserves the existing key", str(context.exception))
+
 
 class ParserTests(unittest.TestCase):
     def test_setup_mode(self):
@@ -140,6 +178,15 @@ class ParserTests(unittest.TestCase):
         args = cli.parser().parse_args(["mode", "hid", "--skip-enroll"])
         self.assertEqual(args.mode, "hid")
         self.assertTrue(args.skip_enroll)
+
+    def test_add_computer_configures_both_modes(self):
+        args = cli.parser().parse_args(["add-computer", "--port", "/dev/cu.example"])
+        self.assertEqual(args.port, "/dev/cu.example")
+
+    def test_computers_remove_accepts_host_id(self):
+        args = cli.parser().parse_args(["computers", "remove", "0123456789abcdef"])
+        self.assertEqual(args.action, "remove")
+        self.assertEqual(args.host_id, "0123456789abcdef")
 
     def test_customer_setup_has_no_firmware_build_options(self):
         args = cli.parser().parse_args(["setup", "--mode", "hid"])

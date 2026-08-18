@@ -1,10 +1,5 @@
 import { ESPLoader, Transport } from "./vendor/esptool-js.js";
 
-const images = [
-  ["Bootloader", "./firmware/bootloader.bin", 0x0, "428949ea55c59d51dd079c57ca90d0b9487bd30e5970b9ed51cd5a2ce713bd96"],
-  ["Partition table", "./firmware/partition-table.bin", 0x8000, "7f00b6c042a89b15b0cac534f82ed988caf29278ff5700b0c511eb1b5bb7c820"],
-  ["Recovery firmware", "./firmware/tiny_touch_recovery.bin", 0x10000, "84ef708337f7e1852b0947a76969c86058b52846113d94885ab1b6f1369a047d"],
-];
 const button = document.querySelector("#flash");
 const message = document.querySelector("#message");
 const browserNote = document.querySelector("#browser-note");
@@ -37,15 +32,20 @@ async function sha256(data) {
 }
 
 async function loadFirmware() {
+  const manifestResponse = await fetch("./manifest.json", { cache: "no-store" });
+  if (!manifestResponse.ok) throw new Error("Recovery manifest could not be downloaded.");
+  const manifest = await manifestResponse.json();
   const loaded = [];
-  for (const [name, url, address, expected] of images) {
-    const response = await fetch(url, { cache: "no-store" });
+  for (const image of manifest.images) {
+    const response = await fetch(`./firmware/${image.file}`, { cache: "no-store" });
+    const { name, address, sha256: expected, size } = image;
     if (!response.ok) throw new Error(`${name} could not be downloaded.`);
     const buffer = await response.arrayBuffer();
+    if (buffer.byteLength !== size) throw new Error(`${name} has the wrong file size.`);
     if (await sha256(buffer) !== expected) throw new Error(`${name} failed its integrity check.`);
     loaded.push({ data: new Uint8Array(buffer), address });
   }
-  return loaded;
+  return { files: loaded, manifest };
 }
 
 function friendlyError(error) {
@@ -76,12 +76,13 @@ button.addEventListener("click", async () => {
     if (!/ESP32-S3/i.test(chip)) throw new Error(`This is ${chip}, not an ESP32-S3.`);
 
     stage.textContent = "Checking recovery firmware";
-    const fileArray = await loadFirmware();
+    const { files: fileArray, manifest } = await loadFirmware();
     const totalBytes = fileArray.reduce((sum, file) => sum + file.data.length, 0);
     const written = fileArray.map(() => 0);
     stage.textContent = "Writing recovery firmware";
     await loader.writeFlash({
-      fileArray, flashMode:"dio", flashFreq:"80m", flashSize:"4MB", eraseAll:true, compress:false,
+      fileArray, flashMode:"dio", flashFreq:"80m", flashSize:manifest.flashSize,
+      eraseAll:manifest.eraseAll, compress:manifest.compress,
       reportProgress(index, amount) {
         written[index] = amount;
         const value = Math.min(100, Math.round(written.reduce((sum, item) => sum + item, 0) / totalBytes * 100));
