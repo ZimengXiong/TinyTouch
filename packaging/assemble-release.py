@@ -69,7 +69,7 @@ def main() -> None:
             [
                 ("Bootloader", "bootloader/bootloader.bin", "bootloader.bin", 0x0),
                 ("Partition table", "partition_table/partition-table.bin", "partition-table.bin", 0x8000),
-                ("Unified firmware", "tiny_touch_smartcard.bin", "tiny_touch_smartcard.bin", 0x10000),
+                ("Unified firmware", "tiny_touch_unified.bin", "tiny_touch_unified.bin", 0x10000),
             ],
         ),
         "recovery": (
@@ -77,7 +77,7 @@ def main() -> None:
             [
                 ("Bootloader", "bootloader/bootloader.bin", "bootloader.bin", 0x0),
                 ("Partition table", "partition_table/partition-table.bin", "partition-table.bin", 0x8000),
-                ("Recovery firmware", "tiny_touch_smartcard.bin", "tiny_touch_recovery.bin", 0x10000),
+                ("Recovery firmware", "tiny_touch_unified.bin", "tiny_touch_recovery.bin", 0x10000),
             ],
         ),
     }

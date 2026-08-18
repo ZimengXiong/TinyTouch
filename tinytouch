@@ -28,7 +28,7 @@ ROOT = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resol
 BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", ROOT))
 VERSION_FILE = BUNDLE_ROOT / "VERSION"
 CLI_VERSION = VERSION_FILE.read_text(encoding="utf-8").strip() if VERSION_FILE.exists() else "development"
-PIV_PROJECT = ROOT / "firmware" / "tiny_touch_smartcard"
+UNIFIED_FIRMWARE_PROJECT = ROOT / "firmware" / "tiny_touch_unified"
 HELPER = ROOT / "software" / "macos-helper" / "tinytouch_helper.py"
 REQUIREMENTS = ROOT / "software" / "macos-helper" / "requirements.txt"
 VENV = ROOT / ".venv"
@@ -627,7 +627,7 @@ def generate_piv_bundle() -> dict[str, str]:
 
 def run_idf(arguments: list[str]) -> None:
     if shutil.which("idf.py"):
-        run(["idf.py", *arguments], cwd=PIV_PROJECT)
+        run(["idf.py", *arguments], cwd=UNIFIED_FIRMWARE_PROJECT)
         return
     candidates = [
         Path(os.environ.get("IDF_PATH", "")) / "export.sh" if os.environ.get("IDF_PATH") else None,
@@ -639,7 +639,11 @@ def run_idf(arguments: list[str]) -> None:
     shell_command = "source {} >/dev/null && idf.py {}".format(
         shlex.quote(str(export)), " ".join(shlex.quote(item) for item in arguments)
     )
-    run(["/bin/zsh", "-lc", shell_command], cwd=PIV_PROJECT, display=f"idf.py {' '.join(arguments)}")
+    run(
+        ["/bin/zsh", "-lc", shell_command],
+        cwd=UNIFIED_FIRMWARE_PROJECT,
+        display=f"idf.py {' '.join(arguments)}",
+    )
 
 
 def flash_piv(port: str) -> str:

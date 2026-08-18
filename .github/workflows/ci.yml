@@ -25,17 +25,17 @@ jobs:
       - name: Build factory firmware
         run: |
           source /opt/esp/idf/export.sh
-          idf.py -C firmware/tiny_touch_smartcard build
+          idf.py -C firmware/tiny_touch_unified build
       - name: Build recovery firmware
         run: |
           source /opt/esp/idf/export.sh
-          idf.py -C firmware/tiny_touch_smartcard -B firmware/tiny_touch_smartcard/build-recovery -D TINYTOUCH_RECOVERY_BUILD=ON build
+          idf.py -C firmware/tiny_touch_unified -B firmware/tiny_touch_unified/build-recovery -D TINYTOUCH_RECOVERY_BUILD=ON build
       - name: Assemble and verify browser artifacts
         run: |
           source /opt/esp/idf/export.sh
           python packaging/assemble-release.py \
-            --firmware-build firmware/tiny_touch_smartcard/build \
-            --recovery-build firmware/tiny_touch_smartcard/build-recovery \
+            --firmware-build firmware/tiny_touch_unified/build \
+            --recovery-build firmware/tiny_touch_unified/build-recovery \
             --web-root web
           python - <<'PY'
           import hashlib, json
