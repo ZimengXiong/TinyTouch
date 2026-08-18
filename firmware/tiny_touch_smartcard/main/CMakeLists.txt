@@ -10,6 +10,7 @@ idf_component_register(
     "usb_descriptors.c"
   INCLUDE_DIRS "."
   REQUIRES driver esp_timer esp_tinyusb mbedtls nvs_flash
+  PRIV_REQUIRES esp_driver_uart
 )
 
 if(TINYTOUCH_RECOVERY_BUILD)
