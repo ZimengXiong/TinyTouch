@@ -22,16 +22,16 @@ jobs:
         run: test "${GITHUB_REF_NAME#v}" = "$(tr -d '[:space:]' < VERSION)"
       - run: |
           source /opt/esp/idf/export.sh
-          idf.py -C firmware/tiny_touch_smartcard build
+          idf.py -C firmware/tiny_touch_unified build
       - run: |
           source /opt/esp/idf/export.sh
-          idf.py -C firmware/tiny_touch_smartcard -B firmware/tiny_touch_smartcard/build-recovery -D TINYTOUCH_RECOVERY_BUILD=ON build
+          idf.py -C firmware/tiny_touch_unified -B firmware/tiny_touch_unified/build-recovery -D TINYTOUCH_RECOVERY_BUILD=ON build
       - name: Assemble firmware release
         run: |
           source /opt/esp/idf/export.sh
           python packaging/assemble-release.py \
-            --firmware-build firmware/tiny_touch_smartcard/build \
-            --recovery-build firmware/tiny_touch_smartcard/build-recovery
+            --firmware-build firmware/tiny_touch_unified/build \
+            --recovery-build firmware/tiny_touch_unified/build-recovery
       - uses: actions/upload-artifact@v7
         with:
           name: firmware-release

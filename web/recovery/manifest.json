@@ -1,5 +1,5 @@
 {
-  "version": "0.4.1-preprod",
+  "version": "0.4.2-preprod",
   "protocol": 2,
   "flashSize": "4MB",
   "eraseAll": true,
@@ -10,7 +10,7 @@
       "file": "bootloader.bin",
       "address": 0,
       "size": 21504,
-      "sha256": "428949ea55c59d51dd079c57ca90d0b9487bd30e5970b9ed51cd5a2ce713bd96"
+      "sha256": "e21921d3169e340768fa291ed61d73b5f4afe8c1ed6633c5139a8010d7948e07"
     },
     {
       "name": "Partition table",
@@ -24,12 +24,12 @@
       "file": "tiny_touch_recovery.bin",
       "address": 65536,
       "size": 393792,
-      "sha256": "e36bc0103b2d1c128a63d14e0c455c0c742bc604a41ae6b4daaca9677f56c53d"
+      "sha256": "9f7486207e9e5bde27bab8bc58406f8bd10ea67550b557bd5151fe459bb3a389"
     }
   ],
   "fullImage": {
     "file": "tiny_touch_recovery_full.bin",
     "size": 459328,
-    "sha256": "144b0903922d5746141d6b25cdac14b0c00e438c9efdaf3c93f19d9967982dce"
+    "sha256": "aca2317d26897a00a8801d1cf9588215ba908d633c724750f51ffd2d24aa6ff6"
   }
 }

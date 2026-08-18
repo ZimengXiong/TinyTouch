@@ -18,6 +18,12 @@ class PackagingTests(unittest.TestCase):
     def test_version_comes_from_shared_version_file(self):
         self.assertEqual(cli.CLI_VERSION, (ROOT / "VERSION").read_text().strip())
 
+    def test_only_unified_firmware_source_is_present(self):
+        firmware = ROOT / "firmware"
+        self.assertTrue((firmware / "tiny_touch_unified" / "CMakeLists.txt").is_file())
+        self.assertFalse((firmware / "tiny_touch_keyboard").exists())
+        self.assertFalse((firmware / "tiny_touch_smartcard").exists())
+
     def test_launch_agent_uses_current_repository(self):
         python = Path("/tmp/example-python")
         payload = plistlib.loads(cli.launch_agent_contents(python))

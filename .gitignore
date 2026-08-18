@@ -3,12 +3,12 @@
 __pycache__/
 *.pyc
 
-firmware/tiny_touch_keyboard/secrets.h
-firmware/tiny_touch_smartcard/main/secrets.h
-firmware/tiny_touch_smartcard/build/
-firmware/tiny_touch_smartcard/build-recovery/
-firmware/tiny_touch_smartcard/managed_components/
-firmware/tiny_touch_smartcard/sdkconfig.old
+firmware/tiny_touch_unified/.cache/
+firmware/tiny_touch_unified/main/secrets.h
+firmware/tiny_touch_unified/build/
+firmware/tiny_touch_unified/build-recovery/
+firmware/tiny_touch_unified/managed_components/
+firmware/tiny_touch_unified/sdkconfig.old
 
 build/distribution/
 dist/
