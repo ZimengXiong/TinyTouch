@@ -40,6 +40,8 @@ CLI_INSTALL_PATH = CLI_INSTALL_DIR / "tinytouch"
 VERBOSE = False
 HELPER_SUSPENDED = False
 FACTORY_FLASH_URL = "https://alpacaengineer.ing/tinytouch/batch-0/flash/"
+SUPPORTED_IDF_SERIES = (5, 3)
+idf_version_checked = False
 
 
 class ToolError(RuntimeError):
@@ -602,10 +604,10 @@ def generate_piv_bundle() -> dict[str, str]:
         return outputs
 
 
-def run_idf(arguments: list[str]) -> None:
+def idf_command(arguments: list[str]) -> tuple[list[str], str]:
+    display = f"idf.py {' '.join(arguments)}"
     if shutil.which("idf.py"):
-        run(["idf.py", *arguments], cwd=PIV_PROJECT)
-        return
+        return ["idf.py", *arguments], display
     candidates = [
         Path(os.environ.get("IDF_PATH", "")) / "export.sh" if os.environ.get("IDF_PATH") else None,
         Path.home() / "esp" / "esp-idf" / "export.sh",
@@ -616,7 +618,61 @@ def run_idf(arguments: list[str]) -> None:
     shell_command = "source {} >/dev/null && idf.py {}".format(
         shlex.quote(str(export)), " ".join(shlex.quote(item) for item in arguments)
     )
-    run(["/bin/zsh", "-lc", shell_command], cwd=PIV_PROJECT, display=f"idf.py {' '.join(arguments)}")
+    return ["/bin/zsh", "-lc", shell_command], display
+
+
+def require_supported_idf() -> None:
+    """Fail early when the active ESP-IDF is not 5.3.x.
+
+    IDF 6.0 ships mbedTLS 4.x, which removed the legacy crypto headers that
+    piv.c and touch_pin_hid.c include. Without this check the build runs for
+    several minutes and then fails with a misleading "missing header" hint
+    pointing at OpenThread's vendored mbedtls.
+    """
+    global idf_version_checked
+    if idf_version_checked:
+        return
+    command, display = idf_command(["--version"])
+    try:
+        output = run(command, capture=True, display=display)
+    except ToolError as exc:
+        raise ToolError(
+            "Could not determine the ESP-IDF version.\n"
+            f"Reason: {exc}\n"
+            "Install ESP-IDF 5.3.x and source its export.sh, then try again."
+        ) from exc
+    found = re.search(r"v(\d+)\.(\d+)", output)
+    if not found:
+        verbose(f"unrecognized 'idf.py --version' output: {output}")
+        idf_version_checked = True
+        return
+    series = (int(found.group(1)), int(found.group(2)))
+    if series != SUPPORTED_IDF_SERIES:
+        supported = "{}.{}".format(*SUPPORTED_IDF_SERIES)
+        because = (
+            "ESP-IDF 6.0 removed the mbedTLS headers this firmware uses, so it "
+            "cannot build there.\n"
+            if series[0] >= 6
+            else ""
+        )
+        raise ToolError(
+            f"tinyTouch needs ESP-IDF {supported}.x, but the active one reports "
+            f"{output.strip()}.\n"
+            f"{because}\n"
+            f"  git clone -b v{supported}.3 --recursive "
+            f"https://github.com/espressif/esp-idf.git ~/esp/esp-idf-v{supported}.3\n"
+            f"  cd ~/esp/esp-idf-v{supported}.3 && ./install.sh esp32s3\n"
+            f"  source ~/esp/esp-idf-v{supported}.3/export.sh\n\n"
+            "Then delete build/, sdkconfig, and dependencies.lock in "
+            "firmware/tiny_touch_smartcard before building again."
+        )
+    idf_version_checked = True
+
+
+def run_idf(arguments: list[str]) -> None:
+    require_supported_idf()
+    command, display = idf_command(arguments)
+    run(command, cwd=PIV_PROJECT, display=display)
 
 
 def flash_piv(port: str) -> str:
