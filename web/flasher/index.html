@@ -16,7 +16,10 @@
     <section class="intro">
       <p class="label">ESP32-S3 · UNIFIED FIRMWARE</p>
       <h1>Flash a new board.</h1>
-      <p class="lede">Use Chrome or Edge with an ESP32-S3 SuperMini or Seeed XIAO ESP32-S3.</p>
+      <div>
+        <p class="lede">Use Chrome or Edge with an ESP32-S3 SuperMini or Seeed XIAO ESP32-S3.</p>
+        <p class="firmware-version">Firmware to be flashed: <strong id="firmware-version">loading…</strong></p>
+      </div>
     </section>
 
     <section class="card">
@@ -31,7 +34,7 @@
         <div><span id="stage">Writing firmware</span><strong id="percent">0%</strong></div>
         <progress id="progress" max="100" value="0">0%</progress>
       </div>
-      <button id="flash" type="button">Connect &amp; flash</button>
+      <button id="flash" type="button" disabled>Connect &amp; flash</button>
       <p id="browser-note" class="note"></p>
     </section>
 

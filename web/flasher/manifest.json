@@ -1,5 +1,5 @@
 {
-  "version": "0.4.0-preprod",
+  "version": "0.4.1-preprod",
   "protocol": 2,
   "flashSize": "4MB",
   "eraseAll": false,
@@ -24,12 +24,12 @@
       "file": "tiny_touch_smartcard.bin",
       "address": 65536,
       "size": 392688,
-      "sha256": "431f11d6ea92233d71e01effc7235e6d823cea43b5fc0a599cf83e759b77af0d"
+      "sha256": "7f1d6f1ffb9ee658285ff840ee80e03c99297dcd69557096d71d434445bb153c"
     }
   ],
   "fullImage": {
     "file": "tiny_touch_factory_full.bin",
     "size": 458224,
-    "sha256": "dcabd42f7e0014227c56d820240e3722406e6ae88d462ad9936a6b1cd2a69199"
+    "sha256": "12b18662ea6a907afad19c7b86725e6752ce4e91b26b3fb5b67b9529d97ead67"
   }
 }

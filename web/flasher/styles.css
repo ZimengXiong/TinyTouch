@@ -9,6 +9,8 @@ main { width:min(940px,calc(100% - 36px)); margin:0 auto; padding:72px 0 44px; }
 .label { color:var(--orange); font:650 11px ui-monospace,monospace; letter-spacing:.11em; }
 h1 { margin:10px 0 0; font-size:clamp(48px,8vw,84px); line-height:.95; letter-spacing:-.065em; }
 .lede { color:var(--muted); font-size:18px; max-width:420px; margin:0 0 7px; }
+.firmware-version { color:var(--muted); margin:13px 0 0; font:600 12px ui-monospace,monospace; }
+.firmware-version strong { color:var(--ink); }
 .card { display:grid; grid-template-columns:1.25fr .75fr; gap:34px 44px; background:var(--ink); color:var(--cream); padding:clamp(25px,5vw,48px); }
 ol { list-style:none; padding:0; margin:0; grid-row:span 4; }
 li { display:grid; grid-template-columns:34px 1fr; gap:14px; padding:17px 0; border-bottom:1px solid #ffffff22; }

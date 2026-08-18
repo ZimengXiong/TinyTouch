@@ -8,9 +8,10 @@ const progress = document.querySelector("#progress");
 const percent = document.querySelector("#percent");
 const stage = document.querySelector("#stage");
 const log = document.querySelector("#log");
+const firmwareVersion = document.querySelector("#firmware-version");
+const serialSupported = "serial" in navigator;
 
-if (!("serial" in navigator)) {
-  button.disabled = true;
+if (!serialSupported) {
   browserNote.textContent = "Open this page in Google Chrome or Microsoft Edge.";
 }
 
@@ -31,10 +32,27 @@ async function sha256(data) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function loadFirmware() {
+async function loadManifest() {
   const manifestResponse = await fetch("./manifest.json", { cache: "no-store" });
   if (!manifestResponse.ok) throw new Error("Recovery manifest could not be downloaded.");
   const manifest = await manifestResponse.json();
+  if (!manifest.version || !Array.isArray(manifest.images)) {
+    throw new Error("Recovery manifest is incomplete.");
+  }
+  return manifest;
+}
+
+const manifestPromise = loadManifest();
+manifestPromise.then((manifest) => {
+  firmwareVersion.textContent = manifest.version;
+  button.disabled = !serialSupported;
+}).catch((error) => {
+  firmwareVersion.textContent = "unavailable";
+  show(friendlyError(error), "error");
+});
+
+async function loadFirmware() {
+  const manifest = await manifestPromise;
   const loaded = [];
   for (const image of manifest.images) {
     const response = await fetch(`./firmware/${image.file}`, { cache: "no-store" });
@@ -102,6 +120,6 @@ button.addEventListener("click", async () => {
     show(friendlyError(error), "error");
     try { await transport?.disconnect(); } catch {}
   } finally {
-    button.disabled = false;
+    button.disabled = !serialSupported;
   }
 });
