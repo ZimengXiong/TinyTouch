@@ -1,5 +1,5 @@
 {
-  "version": "0.4.0-preprod",
+  "version": "0.4.1-preprod",
   "protocol": 2,
   "flashSize": "4MB",
   "eraseAll": true,
@@ -24,12 +24,12 @@
       "file": "tiny_touch_recovery.bin",
       "address": 65536,
       "size": 393792,
-      "sha256": "b77b4f0ea345a98621c9abe7d4baeac7913a335f924d4947bd9ccee1ea21c8b4"
+      "sha256": "e36bc0103b2d1c128a63d14e0c455c0c742bc604a41ae6b4daaca9677f56c53d"
     }
   ],
   "fullImage": {
     "file": "tiny_touch_recovery_full.bin",
     "size": 459328,
-    "sha256": "062654b5fedeeae8a923ca62e345eb557445118fbc5a62baef74634fbfe86677"
+    "sha256": "144b0903922d5746141d6b25cdac14b0c00e438c9efdaf3c93f19d9967982dce"
   }
 }

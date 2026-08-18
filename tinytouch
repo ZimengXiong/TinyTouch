@@ -1098,27 +1098,46 @@ def command_add_computer(args: argparse.Namespace) -> None:
     status = status_fields(port)
     require_unified_firmware(status)
     require_fingerprint_sensor(status)
-    step(2, 4, "Authorize this Mac")
-    unlock_configuration(port)
-    if status.get("keys") != "nvs":
-        port = provision_piv_keys(port, generate_piv_bundle())
-        status = status_fields(port)
-    configure_hid_credentials(port, status)
+    mode = status.get("mode")
+    if mode not in {"piv", "hid"}:
+        raise ToolError("tinyTouch did not report a valid active mode.")
+    say(f"Current mode: {mode.upper()}. This Mac will be added for {mode.upper()} only.")
+
     try:
         fingerprint_count = int(status.get("fingerprints", "0"))
     except ValueError:
         fingerprint_count = 0
+
+    configuration_unlocked = False
+    step(2, 4, f"Authorize {mode.upper()} setup")
+    if mode == "hid" or status.get("keys") != "nvs" or fingerprint_count == 0:
+        unlock_configuration(port)
+        configuration_unlocked = True
+    else:
+        say("Touch your enrolled finger when macOS pairing requests authorization.")
+
+    if status.get("keys") != "nvs":
+        port = provision_piv_keys(port, generate_piv_bundle())
+        status = status_fields(port)
+
     step(3, 4, "Check fingerprint")
     if fingerprint_count == 0:
+        if not configuration_unlocked:
+            unlock_configuration(port)
         say("Enroll your first fingerprint.")
         serial_command(port, "ENROLL 1", timeout=45)
         say("  ✓ Fingerprint enrolled in slot 1.")
     else:
         say(f"  ✓ Preserving {fingerprint_count} enrolled fingerprint(s).")
-    step(4, 4, "Pair PIV with this Mac")
-    pair_piv(port=port)
+
+    if mode == "hid":
+        step(4, 4, "Add HID access for this Mac")
+        configure_hid_credentials(port, status)
+    else:
+        step(4, 4, "Pair PIV with this Mac")
+        pair_piv(port=port)
     say()
-    say(f"This Mac is ready for PIV and HID. Active device mode remains {status['mode'].upper()}.")
+    say(f"This Mac is ready for {mode.upper()}. The device remains in {mode.upper()} mode.")
 
 
 def command_computers(args: argparse.Namespace) -> None:
@@ -1411,7 +1430,7 @@ def parser() -> argparse.ArgumentParser:
     mode.set_defaults(func=command_mode)
 
     add_computer = sub.add_parser(
-        "add-computer", help="configure this Mac for both PIV and HID without replacing other Macs"
+        "add-computer", help="add this Mac to the device's current PIV or HID mode"
     )
     add_verbose_option(add_computer)
     add_computer.add_argument("--port", help="use a specific /dev/cu.* device")

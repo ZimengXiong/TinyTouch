@@ -179,9 +179,47 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(args.mode, "hid")
         self.assertTrue(args.skip_enroll)
 
-    def test_add_computer_configures_both_modes(self):
+    def test_add_computer_uses_current_mode(self):
         args = cli.parser().parse_args(["add-computer", "--port", "/dev/cu.example"])
         self.assertEqual(args.port, "/dev/cu.example")
+
+    def test_add_computer_in_hid_mode_only_adds_hid_credentials(self):
+        args = cli.parser().parse_args(["add-computer", "--port", "/dev/cu.example"])
+        status = {
+            "firmware": "unified", "mode": "hid", "sensor": "ok",
+            "fingerprints": "1", "keys": "nvs", "protocol": "2",
+        }
+        with (
+            mock.patch.object(cli, "require_macos"),
+            mock.patch.object(cli, "choose_port", return_value="/dev/cu.example"),
+            mock.patch.object(cli, "status_fields", return_value=status),
+            mock.patch.object(cli, "unlock_configuration") as unlock,
+            mock.patch.object(cli, "configure_hid_credentials") as configure_hid,
+            mock.patch.object(cli, "pair_piv") as pair_piv,
+        ):
+            cli.command_add_computer(args)
+        unlock.assert_called_once_with("/dev/cu.example")
+        configure_hid.assert_called_once_with("/dev/cu.example", status)
+        pair_piv.assert_not_called()
+
+    def test_add_computer_in_piv_mode_only_pairs_piv(self):
+        args = cli.parser().parse_args(["add-computer", "--port", "/dev/cu.example"])
+        status = {
+            "firmware": "unified", "mode": "piv", "sensor": "ok",
+            "fingerprints": "1", "keys": "nvs", "protocol": "2",
+        }
+        with (
+            mock.patch.object(cli, "require_macos"),
+            mock.patch.object(cli, "choose_port", return_value="/dev/cu.example"),
+            mock.patch.object(cli, "status_fields", return_value=status),
+            mock.patch.object(cli, "unlock_configuration") as unlock,
+            mock.patch.object(cli, "configure_hid_credentials") as configure_hid,
+            mock.patch.object(cli, "pair_piv") as pair_piv,
+        ):
+            cli.command_add_computer(args)
+        unlock.assert_not_called()
+        configure_hid.assert_not_called()
+        pair_piv.assert_called_once_with(port="/dev/cu.example")
 
     def test_computers_remove_accepts_host_id(self):
         args = cli.parser().parse_args(["computers", "remove", "0123456789abcdef"])
