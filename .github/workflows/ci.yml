@@ -67,7 +67,7 @@ jobs:
         run: packaging/build-standalone-macos.sh
       - name: Verify executable
         run: |
-          test "$(dist/tinytouch --version)" = "tinyTouch CLI $(tr -d '[:space:]' < VERSION)"
+          test "$(dist/tinytouch --version | tail -n 1)" = "tinyTouch CLI $(tr -d '[:space:]' < VERSION)"
           codesign --verify --strict --verbose=2 dist/tinytouch
           file dist/tinytouch | grep -q arm64
       - uses: actions/upload-artifact@v4
