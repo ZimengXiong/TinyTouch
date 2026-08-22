@@ -101,3 +101,13 @@ jobs:
             dist/release/tinytouch-macos-arm64 \
             dist/release/tinytouch-firmware.tar.gz \
             dist/release/tinytouch-web-flashers.tar.gz
+
+      - name: Dispatch site deployment
+        env:
+          GH_TOKEN: ${{ secrets.TINYTOUCH_SITE_DISPATCH_TOKEN }}
+        run: |
+          test -n "${GH_TOKEN:-}"
+          gh api repos/ZimengXiong/alpacaengineer/dispatches \
+            --method POST \
+            -f event_type=tinytouch-release \
+            -f "client_payload[tag]=$GITHUB_REF_NAME"
