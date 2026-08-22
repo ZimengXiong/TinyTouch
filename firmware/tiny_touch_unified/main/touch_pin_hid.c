@@ -300,10 +300,19 @@ done:
 static void touch_hid_task(void *arg) {
   (void)arg;
   TickType_t last_success = 0;
+  TickType_t last_poll = 0;
+  bool wait_for_lift = false;
 
   while (true) {
-    if (tud_hid_ready() &&
-        (xTaskGetTickCount() - last_success) > pdMS_TO_TICKS(3000) &&
+    TickType_t now = xTaskGetTickCount();
+    bool present = fingerprint_present_hint();
+    if (wait_for_lift && !present &&
+        (TickType_t)(now - last_success) > pdMS_TO_TICKS(800)) {
+      wait_for_lift = false;
+    }
+    TickType_t min_interval = present ? pdMS_TO_TICKS(15) : pdMS_TO_TICKS(50);
+    if (!wait_for_lift && tud_hid_ready() &&
+        (TickType_t)(now - last_poll) >= min_interval &&
         fingerprint_authorize_poll_once()) {
       if (device_config_mode() == DEVICE_MODE_HID) {
         ESP_LOGI(TAG, "finger matched; requesting HID password");
@@ -314,8 +323,12 @@ static void touch_hid_task(void *arg) {
         type_dummy_pin();
       }
       last_success = xTaskGetTickCount();
+      wait_for_lift = true;
+      vTaskDelay(pdMS_TO_TICKS(250));
+      fingerprint_led_idle();
     }
-    vTaskDelay(pdMS_TO_TICKS(250));
+    last_poll = xTaskGetTickCount();
+    vTaskDelay(pdMS_TO_TICKS(10));
   }
 }
 

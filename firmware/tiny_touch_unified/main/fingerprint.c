@@ -188,7 +188,11 @@ static bool fingerprint_match_captured(bool quiet) {
     uint16_t score = ((uint16_t)search_data[2] << 8) | search_data[3];
     bool ok = score > 0;
     ESP_LOGI(TAG, "fingerprint search: %s score=%u", ok ? "ok" : "failed", score);
-    if (!quiet || ok) show_result(ok);
+    if (!quiet) {
+      show_result(ok);
+    } else if (!ok) {
+      flash_aura(FP_LED_RED);
+    }
     return ok;
   } else if (!quiet) {
     ESP_LOGW(TAG, "search failed confirm=0x%02x len=%u", confirm, (unsigned)search_len);
@@ -234,6 +238,7 @@ bool fingerprint_authorize_poll_once(void) {
     fp_give();
     return false;
   }
+  flash_aura(FP_LED_GREEN);
   bool ok = fingerprint_match_captured(true);
   fp_give();
   return ok;
