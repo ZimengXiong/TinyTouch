@@ -22,39 +22,51 @@ static const char *TAG = "touch_hid";
 static const uint8_t ascii_to_keycode[128][2] = {HID_ASCII_TO_KEYCODE};
 static QueueHandle_t password_responses;
 static uint32_t event_counter;
+static volatile bool hid_suspended;
+static volatile bool hid_needs_release;
 
 static void secure_wipe(void *data, size_t length) {
   volatile uint8_t *cursor = data;
   while (length--) *cursor++ = 0;
 }
 
-static void wait_hid_ready(void) {
-  while (!tud_hid_ready()) vTaskDelay(pdMS_TO_TICKS(10));
+static bool wait_hid_ready(void) {
+  TickType_t started = xTaskGetTickCount();
+  while (!tud_hid_ready()) {
+    if (hid_suspended ||
+        (TickType_t)(xTaskGetTickCount() - started) >= pdMS_TO_TICKS(2000)) {
+      return false;
+    }
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+  return true;
 }
 
-static void send_key(uint8_t modifier, uint8_t key) {
+static bool send_key(uint8_t modifier, uint8_t key) {
   uint8_t report[6] = {key, 0, 0, 0, 0, 0};
-  wait_hid_ready();
-  tud_hid_keyboard_report(0, modifier, report);
+  if (!wait_hid_ready()) return false;
+  if (!tud_hid_keyboard_report(0, modifier, report)) return false;
   vTaskDelay(pdMS_TO_TICKS(7));
-  wait_hid_ready();
-  tud_hid_keyboard_report(0, 0, NULL);
+  if (!wait_hid_ready()) return false;
+  if (!tud_hid_keyboard_report(0, 0, NULL)) return false;
   vTaskDelay(pdMS_TO_TICKS(7));
+  return true;
 }
 
-static void type_dummy_pin(void) {
-  for (int i = 0; i < 6; i++) send_key(0, HID_KEY_0);
-  send_key(0, HID_KEY_ENTER);
+static bool type_dummy_pin(void) {
+  for (int i = 0; i < 6; i++) {
+    if (!send_key(0, HID_KEY_0)) return false;
+  }
+  return send_key(0, HID_KEY_ENTER);
 }
 
 static bool type_ascii(const uint8_t *data, size_t length) {
   for (size_t i = 0; i < length; i++) {
     if (data[i] >= 128 || ascii_to_keycode[data[i]][1] == 0) return false;
     uint8_t modifier = ascii_to_keycode[data[i]][0] ? KEYBOARD_MODIFIER_LEFTSHIFT : 0;
-    send_key(modifier, ascii_to_keycode[data[i]][1]);
+    if (!send_key(modifier, ascii_to_keycode[data[i]][1])) return false;
   }
-  send_key(0, HID_KEY_ENTER);
-  return true;
+  return send_key(0, HID_KEY_ENTER);
 }
 
 static void bytes_to_hex(const uint8_t *data, size_t length, char *output) {
@@ -304,6 +316,10 @@ static void touch_hid_task(void *arg) {
   bool wait_for_lift = false;
 
   while (true) {
+    if (hid_needs_release && tud_hid_ready()) {
+      tud_hid_keyboard_report(0, 0, NULL);
+      hid_needs_release = false;
+    }
     TickType_t now = xTaskGetTickCount();
     bool present = fingerprint_present_hint();
     if (wait_for_lift && !present &&
@@ -320,7 +336,7 @@ static void touch_hid_task(void *arg) {
       } else {
         ESP_LOGI(TAG, "finger matched; authorizing PIV and typing PIN");
         piv_note_user_presence();
-        type_dummy_pin();
+        if (!type_dummy_pin()) ESP_LOGW(TAG, "HID report interrupted by USB suspend");
       }
       last_success = xTaskGetTickCount();
       wait_for_lift = true;
@@ -335,6 +351,20 @@ static void touch_hid_task(void *arg) {
 void touch_pin_hid_start(void) {
   password_responses = xQueueCreate(1, 640);
   xTaskCreate(touch_hid_task, "touch_hid", 6144, NULL, 4, NULL);
+}
+
+// The host can suspend the USB bus while the HID task is between a key-down
+// and key-up report.  Mark the report state dirty so the task emits a release
+// after resume instead of leaving the host with a stuck key.
+void tud_suspend_cb(bool remote_wakeup_en) {
+  (void)remote_wakeup_en;
+  hid_suspended = true;
+  hid_needs_release = true;
+}
+
+void tud_resume_cb(void) {
+  hid_suspended = false;
+  hid_needs_release = true;
 }
 
 bool touch_pin_hid_submit_response(const char *response) {

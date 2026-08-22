@@ -318,12 +318,24 @@ def serve_port(port: str, once: bool = False) -> None:
     password = keychain_get(device_id)
     pairing_key = pairing_keychain_get(device_id)
     state = load_state(device_id)
+    last_port_check = 0.0
     try:
         with open_serial(port) as ser:
             print(f"helper listening on {port} ({device_id})", flush=True)
             while True:
                 raw = ser.readline()
                 if not raw:
+                    # pyserial can leave a descriptor open after macOS removes
+                    # the USB device during sleep.  In that state readline()
+                    # simply times out forever, so the manager never gets a
+                    # chance to open the device again after wake.
+                    now = time.monotonic()
+                    if now - last_port_check >= 1.0:
+                        last_port_check = now
+                        if port not in device_ports():
+                            raise serial.SerialException(
+                                f"serial device disappeared: {port}"
+                            )
                     continue
                 line = raw.decode("utf-8", "replace").strip()
                 if line:
